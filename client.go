@@ -317,7 +317,7 @@ func (client *Client) Login() error {
 		client.RefreshCount = 0
 		client.DomainUUID = httpRes.Header.Get("DOMAIN_UUID")
 		client.Domains = make(map[string]string)
-		gjson.Get(httpRes.Header.Get("DOMAINS"), "").ForEach(func(k, v gjson.Result) bool {
+		gjson.Parse(httpRes.Header.Get("DOMAINS")).ForEach(func(k, v gjson.Result) bool {
 			domainName := v.Get("name").String()
 			domainUuid := v.Get("uuid").String()
 			client.Domains[domainName] = domainUuid
