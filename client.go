@@ -57,8 +57,10 @@ type Client struct {
 	LastRefresh time.Time
 	// RefreshCount is the number to authentication token refreshes with the same refresh token
 	RefreshCount int
-	// DomainUUID is the UUID of the domain returned when generating a token
+	// DomainUUID is the UUID of the global domain returned when generating a token
 	DomainUUID string
+	// Map of domain names to domain UUIDs
+	Domains map[string]string
 
 	RateLimiterBucket *ratelimit.Bucket
 }
@@ -143,14 +145,19 @@ func BackoffDelayFactor(x float64) func(*Client) {
 // NewReq creates a new Req request for this client.
 // Use a "{DOMAIN_UUID}" placeholder in the URI to be replaced with the domain UUID.
 func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Req)) Req {
-	u := strings.ReplaceAll(uri, "{DOMAIN_UUID}", client.DomainUUID)
-	httpReq, _ := http.NewRequest(method, client.Url+u, body)
+	httpReq, _ := http.NewRequest(method, client.Url+uri, body)
 	req := Req{
 		HttpReq:    httpReq,
 		LogPayload: true,
+		DomainName: "",
 	}
 	for _, mod := range mods {
 		mod(&req)
+	}
+	if req.DomainName == "" {
+		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.DomainUUID)
+	} else {
+		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.Domains[req.DomainName])
 	}
 	return req
 }
@@ -309,6 +316,15 @@ func (client *Client) Login() error {
 		client.LastRefresh = time.Now()
 		client.RefreshCount = 0
 		client.DomainUUID = httpRes.Header.Get("DOMAIN_UUID")
+		client.Domains = make(map[string]string)
+		gjson.Get(httpRes.Header.Get("DOMAINS"), "").ForEach(func(k, v gjson.Result) bool {
+			domainName := v.Get("name").String()
+			domainUuid := v.Get("uuid").String()
+			client.Domains[domainName] = domainUuid
+			log.Printf("[DEBUG] Found domain: %s, UUID: %s", domainName, domainUuid)
+			return true // keep iterating
+		})
+
 		log.Printf("[DEBUG] Authentication successful")
 		return nil
 	}

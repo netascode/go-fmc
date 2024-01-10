@@ -27,6 +27,7 @@ func authenticatedTestClient() Client {
 	client.LastRefresh = time.Now()
 	client.RefreshCount = 0
 	client.DomainUUID = "ABC123"
+	client.Domains = map[string]string{"dom1": "DEF456"}
 	return client
 }
 
@@ -69,9 +70,14 @@ func TestClientGet(t *testing.T) {
 	_, err = client.Get("/url")
 	assert.NoError(t, err)
 
-	// URL domain uuidplaceholder
+	// URL global domain uuid
 	gock.New(testURL).Get("/url/ABC123/").Reply(200)
 	_, err = client.Get("/url/{DOMAIN_UUID}/")
+	assert.NoError(t, err)
+
+	// URL global domain uuid
+	gock.New(testURL).Get("/url/DEF456/").Reply(200)
+	_, err = client.Get("/url/{DOMAIN_UUID}/", DomainName("dom1"))
 	assert.NoError(t, err)
 
 	// HTTP error
