@@ -296,12 +296,12 @@ func (client *Client) Login() error {
 		if err != nil {
 			return err
 		}
+		defer httpRes.Body.Close()
+		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
 		}
-		defer httpRes.Body.Close()
-		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if len(bodyBytes) > 0 {
 			if ok := client.Backoff(attempts); !ok {
 				log.Printf("[ERROR] Authentication failed: Invalid credentials")
@@ -342,12 +342,12 @@ func (client *Client) Refresh() error {
 		if err != nil {
 			return err
 		}
+		defer httpRes.Body.Close()
+		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
 		}
-		defer httpRes.Body.Close()
-		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if len(bodyBytes) > 0 {
 			if ok := client.Backoff(attempts); !ok {
 				log.Printf("[ERROR] Authentication failed: Invalid credentials")
