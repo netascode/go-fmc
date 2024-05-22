@@ -91,7 +91,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		BackoffMaxDelay:     DefaultBackoffMaxDelay,
 		BackoffDelayFactor:  DefaultBackoffDelayFactor,
 		AuthenticationMutex: &sync.Mutex{},
-		RateLimiterBucket:   ratelimit.NewBucketWithQuantum(time.Minute, 100, 100),
+		RateLimiterBucket:   ratelimit.NewBucketWithRate(1.66, 1), // 1.66 req/s == 100 req/min
 	}
 
 	for _, mod := range mods {
@@ -181,6 +181,7 @@ func (client *Client) Do(req Req) (Res, error) {
 	var res Res
 
 	for attempts := 0; ; attempts++ {
+		client.RateLimiterBucket.Wait(1) // Block until rate limit token available
 		req.HttpReq.Body = io.NopCloser(bytes.NewBuffer(body))
 		if req.LogPayload {
 			log.Printf("[DEBUG] HTTP Request: %s, %s, %s", req.HttpReq.Method, req.HttpReq.URL, req.HttpReq.Body)
@@ -188,7 +189,6 @@ func (client *Client) Do(req Req) (Res, error) {
 			log.Printf("[DEBUG] HTTP Request: %s, %s", req.HttpReq.Method, req.HttpReq.URL)
 		}
 
-		client.RateLimiterBucket.Wait(1) // Block until rate limit token available
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
