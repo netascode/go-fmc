@@ -91,7 +91,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		BackoffMaxDelay:     DefaultBackoffMaxDelay,
 		BackoffDelayFactor:  DefaultBackoffDelayFactor,
 		AuthenticationMutex: &sync.Mutex{},
-		RateLimiterBucket:   ratelimit.NewBucketWithQuantum(time.Minute, 100, 100),
+		RateLimiterBucket:   ratelimit.NewBucketWithRate(1.66, 1), // 1.66 req/s == 100 req/min
 	}
 
 	for _, mod := range mods {
@@ -181,6 +181,7 @@ func (client *Client) Do(req Req) (Res, error) {
 	var res Res
 
 	for attempts := 0; ; attempts++ {
+		client.RateLimiterBucket.Wait(1) // Block until rate limit token available
 		req.HttpReq.Body = io.NopCloser(bytes.NewBuffer(body))
 		if req.LogPayload {
 			log.Printf("[DEBUG] HTTP Request: %s, %s, %s", req.HttpReq.Method, req.HttpReq.URL, req.HttpReq.Body)
@@ -188,7 +189,6 @@ func (client *Client) Do(req Req) (Res, error) {
 			log.Printf("[DEBUG] HTTP Request: %s, %s", req.HttpReq.Method, req.HttpReq.URL)
 		}
 
-		client.RateLimiterBucket.Wait(1) // Block until rate limit token available
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
@@ -292,16 +292,17 @@ func (client *Client) Login() error {
 	for attempts := 0; ; attempts++ {
 		req := client.NewReq("POST", "/api/fmc_platform/v1/auth/generatetoken", strings.NewReader(""), NoLogPayload)
 		req.HttpReq.SetBasicAuth(client.Usr, client.Pwd)
+		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
 			return err
 		}
+		defer httpRes.Body.Close()
+		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
 		}
-		defer httpRes.Body.Close()
-		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if len(bodyBytes) > 0 {
 			if ok := client.Backoff(attempts); !ok {
 				log.Printf("[ERROR] Authentication failed: Invalid credentials")
@@ -338,16 +339,17 @@ func (client *Client) Refresh() error {
 		req := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
 		req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken)
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.RefreshToken)
+		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
 			return err
 		}
+		defer httpRes.Body.Close()
+		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
 		}
-		defer httpRes.Body.Close()
-		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		if len(bodyBytes) > 0 {
 			if ok := client.Backoff(attempts); !ok {
 				log.Printf("[ERROR] Authentication failed: Invalid credentials")
