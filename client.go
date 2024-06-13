@@ -402,7 +402,7 @@ func (client *Client) Authenticate() error {
 
 // Backoff waits following an exponential backoff algorithm
 func (client *Client) Backoff(attempts int) bool {
-	log.Printf("[DEBUG] Begining backoff method: attempts %v on %v", attempts, client.MaxRetries)
+	log.Printf("[DEBUG] Beginning backoff method: attempt %v of %v", attempts, client.MaxRetries)
 	if attempts >= client.MaxRetries {
 		log.Printf("[DEBUG] Exit from backoff method with return value false")
 		return false
