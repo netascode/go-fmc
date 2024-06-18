@@ -56,7 +56,7 @@ type Client struct {
 	// Backoff delay factor
 	BackoffDelayFactor float64
 	// Authentication mutex
-	AuthenticationMutex *sync.Mutex
+	authenticationMutex *sync.Mutex
 	// LastRefresh is the timestamp of the last authentication token refresh
 	LastRefresh time.Time
 	// RefreshCount is the number to authentication token refreshes with the same refresh token
@@ -97,7 +97,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		BackoffMinDelay:     DefaultBackoffMinDelay,
 		BackoffMaxDelay:     DefaultBackoffMaxDelay,
 		BackoffDelayFactor:  DefaultBackoffDelayFactor,
-		AuthenticationMutex: &sync.Mutex{},
+		authenticationMutex: &sync.Mutex{},
 		RateLimiterBucket:   ratelimit.NewBucketWithRate(1.66, 1), // 1.66 req/s == 100 req/min
 		writingMutex:        &sync.Mutex{},
 	}
@@ -390,13 +390,13 @@ func (client *Client) Refresh() error {
 // Login if no token available.
 func (client *Client) Authenticate() error {
 	var err error
-	client.AuthenticationMutex.Lock()
+	client.authenticationMutex.Lock()
 	if client.AuthToken != "" && time.Since(client.LastRefresh) > 1500*time.Second && client.RefreshCount < 3 {
 		err = client.Refresh()
 	} else if client.AuthToken == "" || (time.Since(client.LastRefresh) >= 1500*time.Second && client.RefreshCount >= 3) {
 		err = client.Login()
 	}
-	client.AuthenticationMutex.Unlock()
+	client.authenticationMutex.Unlock()
 	return err
 }
 
