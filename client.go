@@ -229,6 +229,14 @@ func (client *Client) Do(req Req) (Res, error) {
 			} else if httpRes.StatusCode == 429 || (httpRes.StatusCode >= 500 && httpRes.StatusCode <= 599) {
 				log.Printf("[ERROR] HTTP Request failed: StatusCode %v, Retries: %v", httpRes.StatusCode, attempts)
 				continue
+			} else if httpRes.StatusCode == 401 && res.Get("error.messages.0.description").String() == "Invalid session." {
+				log.Printf("[DEBUG] Got: '%s'", res.Get("error.messages.0.description").String())
+				log.Printf("[DEBUG] Invalid session detected. Reauthenticating")
+				client.AuthToken = ""
+				err := client.Authenticate()
+				if err != nil {
+					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Reauthentication failed: %s", err)
+				}
 			} else {
 				log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 				log.Printf("[DEBUG] Exit from Do method")
