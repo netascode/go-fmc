@@ -238,8 +238,8 @@ func (client *Client) Do(req Req) (Res, error) {
 				// Force reauthentication, client.Authenticate() takes care of mutexes, hence not calling Login() directly
 				err := client.Authenticate()
 				if err != nil {
-					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err)
-					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err)
+					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
+					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
 				}
 				req.HttpReq.Header.Set("X-auth-access-token", client.AuthToken)
 				continue
