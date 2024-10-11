@@ -65,6 +65,8 @@ type Client struct {
 	DomainUUID string
 	// Map of domain names to domain UUIDs
 	Domains map[string]string
+	// FMC Version
+	FMCVersion string
 
 	RateLimiterBucket *ratelimit.Bucket
 
@@ -105,6 +107,12 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	for _, mod := range mods {
 		mod(&client)
 	}
+
+	err := client.GetFMCVersion()
+	if err != nil {
+		return client, err
+	}
+
 	return client, nil
 }
 
@@ -422,4 +430,23 @@ func (client *Client) Backoff(attempts int) bool {
 	time.Sleep(backoffDuration)
 	log.Printf("[DEBUG] Exit from backoff method with return value true")
 	return true
+}
+
+// Get FMC Version
+func (client *Client) GetFMCVersion() error {
+	res, err := client.Get("/api/fmc_platform/v1/info/serverversion")
+	if err != nil {
+		log.Printf("[ERROR] Failed to retrieve FMC version: %s", err.Error())
+		return fmt.Errorf("failed to retrieve FMC version: %s", err.Error())
+	}
+
+	fmcVersion := res.Get("items.0.serverVersion")
+	if !fmcVersion.Exists() {
+		log.Printf("[ERROR] Failed to retrieve FMC version: version not found in FMC responses")
+		return fmt.Errorf("failed to retrieve FMC version: version not found in FMC response")
+	}
+
+	client.FMCVersion = fmcVersion.String()
+
+	return nil
 }
