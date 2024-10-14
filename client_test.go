@@ -75,10 +75,14 @@ func TestClientGet(t *testing.T) {
 	_, err = client.Get("/url/{DOMAIN_UUID}/")
 	assert.NoError(t, err)
 
-	// URL global domain uuid
+	// URL select existing domain
 	gock.New(testURL).Get("/url/DEF456/").Reply(200)
 	_, err = client.Get("/url/{DOMAIN_UUID}/", DomainName("dom1"))
 	assert.NoError(t, err)
+
+	// URL select non-existing domain
+	_, err = client.Get("/url/{DOMAIN_UUID}/", DomainName("dom_does_not_exist"))
+	assert.Error(t, err)
 
 	// HTTP error
 	gock.New(testURL).Get("/url").ReplyError(errors.New("fail"))
