@@ -98,7 +98,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		BackoffMaxDelay:     DefaultBackoffMaxDelay,
 		BackoffDelayFactor:  DefaultBackoffDelayFactor,
 		authenticationMutex: &sync.Mutex{},
-		RateLimiterBucket:   ratelimit.NewBucketWithRate(1.66, 1), // 1.66 req/s == 100 req/min
+		RateLimiterBucket:   ratelimit.NewBucketWithRate(1.97, 1), // 1.97 req/s ~= 118 req/min (+/- 1% from 120 req/min that FMC allows)
 		writingMutex:        &sync.Mutex{},
 	}
 
