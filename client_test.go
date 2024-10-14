@@ -59,6 +59,27 @@ func TestClientLogin(t *testing.T) {
 	assert.Error(t, client.Login())
 }
 
+// TestClientGetFMCVersion tests the Client::GetFMCVersion method.
+func TestClientGetFMCVersion(t *testing.T) {
+	defer gock.Off()
+	client := testClient()
+	var err error
+
+	// Version NOT found
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[]}`)
+	err = client.GetFMCVersion()
+	assert.Error(t, err)
+	assert.Equal(t, "", client.FMCVersion)
+
+	// Version found
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
+	err = client.GetFMCVersion()
+	assert.NoError(t, err)
+	assert.Equal(t, "7.2.4 (build 123)", client.FMCVersion)
+}
+
 // TestClientGet tests the Client::Get method.
 func TestClientGet(t *testing.T) {
 	defer gock.Off()

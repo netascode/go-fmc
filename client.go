@@ -108,11 +108,6 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		mod(&client)
 	}
 
-	err := client.GetFMCVersion()
-	if err != nil {
-		return client, err
-	}
-
 	return client, nil
 }
 
@@ -434,6 +429,11 @@ func (client *Client) Backoff(attempts int) bool {
 
 // Get FMC Version
 func (client *Client) GetFMCVersion() error {
+	// If version is already known, no need to get it from FMC
+	if client.FMCVersion != "" {
+		return nil
+	}
+
 	res, err := client.Get("/api/fmc_platform/v1/info/serverversion")
 	if err != nil {
 		log.Printf("[ERROR] Failed to retrieve FMC version: %s", err.Error())
