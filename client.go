@@ -108,7 +108,19 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		mod(&client)
 	}
 
+	err := client.GetFMCVersion()
+	if err != nil {
+		return client, err
+	}
+
 	return client, nil
+}
+
+// Replace the default HTTP client with a custom one.
+func CustomHttpClient(httpClient *http.Client) func(*Client) {
+	return func(client *Client) {
+		client.HttpClient = httpClient
+	}
 }
 
 // Insecure determines if insecure https connections are allowed. Default value is true.

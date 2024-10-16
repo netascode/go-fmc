@@ -16,8 +16,19 @@ const (
 )
 
 func testClient() Client {
-	client, _ := NewClient(testURL, "usr", "pwd", MaxRetries(0))
-	gock.InterceptClient(client.HttpClient)
+	defer gock.Off()
+
+	// Client will try to get FMC version on creation, so we need to mock those
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
+
+	// Prepare client and intercept
+	httpClient := &http.Client{}
+	gock.InterceptClient(httpClient)
+
+	// Create client
+	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(0))
+
 	return client
 }
 
@@ -41,7 +52,18 @@ func (r ErrReader) Read(buf []byte) (int, error) {
 
 // TestNewClient tests the NewClient function.
 func TestNewClient(t *testing.T) {
-	client, _ := NewClient(testURL, "usr", "pwd", RequestTimeout(120))
+	defer gock.Off()
+
+	// Client will try to get FMC version on creation, so we need to mock those
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
+
+	// Prepare client and intercept
+	httpClient := &http.Client{}
+	gock.InterceptClient(httpClient)
+
+	// Create client
+	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), RequestTimeout(120))
 	assert.Equal(t, client.HttpClient.Timeout, 120*time.Second)
 }
 
@@ -63,20 +85,8 @@ func TestClientLogin(t *testing.T) {
 func TestClientGetFMCVersion(t *testing.T) {
 	defer gock.Off()
 	client := testClient()
-	var err error
 
-	// Version NOT found
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
-	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[]}`)
-	err = client.GetFMCVersion()
-	assert.Error(t, err)
-	assert.Equal(t, "", client.FMCVersion)
-
-	// Version found
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
-	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
-	err = client.GetFMCVersion()
-	assert.NoError(t, err)
+	// Version already known
 	assert.Equal(t, "7.2.4 (build 123)", client.FMCVersion)
 }
 
