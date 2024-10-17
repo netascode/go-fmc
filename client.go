@@ -152,7 +152,7 @@ func BackoffDelayFactor(x float64) func(*Client) {
 
 // NewReq creates a new Req request for this client.
 // Use a "{DOMAIN_UUID}" placeholder in the URI to be replaced with the domain UUID.
-func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Req)) Req {
+func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Req)) (Req, error) {
 	httpReq, _ := http.NewRequest(method, client.Url+uri, body)
 	req := Req{
 		HttpReq:    httpReq,
@@ -165,9 +165,20 @@ func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Re
 	if req.DomainName == "" {
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.DomainUUID)
 	} else {
+		// Check if selected domains exists on FMC
+		if _, ok := client.Domains[req.DomainName]; !ok {
+			availableDomains := make([]string, len(client.Domains))
+			i := 0
+			for k := range client.Domains {
+				availableDomains[i] = k
+				i++
+			}
+			log.Printf("[ERROR] Requested domain not found: requested domain: %s, available domains: %s", req.DomainName, availableDomains)
+			return Req{}, fmt.Errorf("requested domain not found: requested domain: %s, available domains: %s", req.DomainName, availableDomains)
+		}
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.Domains[req.DomainName])
 	}
-	return req
+	return req, nil
 }
 
 // Do makes a request.
@@ -269,7 +280,10 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	if err != nil {
 		return Res{}, err
 	}
-	req := client.NewReq("GET", path, nil, mods...)
+	req, err := client.NewReq("GET", path, nil, mods...)
+	if err != nil {
+		return Res{}, err
+	}
 	return client.Do(req)
 }
 
@@ -279,7 +293,10 @@ func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
 	if err != nil {
 		return Res{}, err
 	}
-	req := client.NewReq("DELETE", path, nil, mods...)
+	req, err := client.NewReq("DELETE", path, nil, mods...)
+	if err != nil {
+		return Res{}, err
+	}
 	return client.Do(req)
 }
 
@@ -290,7 +307,10 @@ func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
 	if err != nil {
 		return Res{}, err
 	}
-	req := client.NewReq("POST", path, strings.NewReader(data), mods...)
+	req, err := client.NewReq("POST", path, strings.NewReader(data), mods...)
+	if err != nil {
+		return Res{}, err
+	}
 	return client.Do(req)
 }
 
@@ -301,14 +321,17 @@ func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
 	if err != nil {
 		return Res{}, err
 	}
-	req := client.NewReq("PUT", path, strings.NewReader(data), mods...)
+	req, err := client.NewReq("PUT", path, strings.NewReader(data), mods...)
+	if err != nil {
+		return Res{}, err
+	}
 	return client.Do(req)
 }
 
 // Login authenticates to the FMC instance.
 func (client *Client) Login() error {
 	for attempts := 0; ; attempts++ {
-		req := client.NewReq("POST", "/api/fmc_platform/v1/auth/generatetoken", strings.NewReader(""), NoLogPayload)
+		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/generatetoken", strings.NewReader(""), NoLogPayload)
 		req.HttpReq.SetBasicAuth(client.Usr, client.Pwd)
 		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
@@ -354,7 +377,7 @@ func (client *Client) Login() error {
 // Refresh will be checked every request and the token will be refreshed after 25 minutes.
 func (client *Client) Refresh() error {
 	for attempts := 0; ; attempts++ {
-		req := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
+		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
 		req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken)
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.RefreshToken)
 		client.RateLimiterBucket.Wait(1)
