@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/juju/ratelimit"
 )
@@ -302,7 +303,57 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 	return client.HttpClient.Do(req.HttpReq)
 }
 
+// GetAll makes a GET requests and returns a GJSON result.
+// It handles pagination and returns all items in a single response.
+func (client *Client) GetAll(path string, mods ...func(*Req)) (Res, error) {
+	// Check if path contains words 'limit' or 'offset'
+	// If so, assume user is doing a paginated request and return the raw data
+	if strings.Contains(path, "limit") || strings.Contains(path, "offset") {
+		return client.Get(path, mods...)
+	}
+
+	// If not, assume user wants to get all data and handle paging
+	const limit = 1000
+	offset := 0
+	fullOutput := `{"items":[]}`
+	for {
+		// Get URL path with offset and limit set
+		urlPath := pathWithOffset(path, offset, limit)
+
+		// Execute query
+		raw, err := client.Get(urlPath, mods...)
+		if err != nil {
+			return raw, err
+		}
+
+		// If this is first request and no more pages exist, return the response
+		if offset == 0 && !raw.Get("paging.next.0").Exists() {
+			return raw, nil
+		}
+
+		// Check if there are any items in the response
+		items := raw.Get("items")
+		if !items.Exists() {
+			return gjson.Parse("null"), fmt.Errorf("no items found in response")
+		}
+
+		resItems := items.String()
+		// Remove first and last character (square brackets) and attach to fullOutput
+		fullOutput, _ = sjson.SetRaw(fullOutput, "items.-1", resItems[1:len(resItems)-1])
+
+		// If there are no more pages, break the loop
+		if !raw.Get("paging.next.0").Exists() {
+			// Create new response with all the items
+			return gjson.Parse(fullOutput), nil
+		}
+
+		// Increase offset to get next bulk of data
+		offset += limit
+	}
+}
+
 // Get makes a GET request and returns a GJSON result.
+// It does the exact request it is told to do.
 // Results will be the raw data structure as returned by FMC
 func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	err := client.Authenticate()
@@ -498,4 +549,14 @@ func (client *Client) GetFMCVersion() error {
 	client.FMCVersion = fmcVersion.String()
 
 	return nil
+}
+
+// Create URL path with offset and limit
+func pathWithOffset(path string, offset, limit int) string {
+	sep := "?"
+	if strings.Contains(path, sep) {
+		sep = "&"
+	}
+
+	return fmt.Sprintf("%s%soffset=%d&limit=%d", path, sep, offset, limit)
 }
