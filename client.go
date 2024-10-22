@@ -26,6 +26,9 @@ const DefaultBackoffMinDelay int = 2
 const DefaultBackoffMaxDelay int = 60
 const DefaultBackoffDelayFactor float64 = 3
 
+// maximum number of Items retrieved in a single GET request
+var maxItems = 1000
+
 // Client is an HTTP FMC client.
 // Use fmc.NewClient to initiate a client.
 // This will ensure proper cookie handling and processing of modifiers.
@@ -303,32 +306,44 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 	return client.HttpClient.Do(req.HttpReq)
 }
 
-// GetAll makes a GET requests and returns a GJSON result.
+// Get makes a GET requests and returns a GJSON result.
 // It handles pagination and returns all items in a single response.
-func (client *Client) GetAll(path string, mods ...func(*Req)) (Res, error) {
+func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	// Check if path contains words 'limit' or 'offset'
 	// If so, assume user is doing a paginated request and return the raw data
 	if strings.Contains(path, "limit") || strings.Contains(path, "offset") {
-		return client.Get(path, mods...)
+		return client.get(path, mods...)
 	}
 
-	// If not, assume user wants to get all data and handle paging
-	const limit = 1000
+	// Execute query as provided by user
+	raw, err := client.get(path, mods...)
+	if err != nil {
+		return raw, err
+	}
+
+	// If there are no more pages, return the response
+	if !raw.Get("paging.next.0").Exists() {
+		return raw, nil
+	}
+
+	log.Printf("[DEBUG] Paginated response detected")
+
+	// Otherwise discard previous response and get all pages
 	offset := 0
 	fullOutput := `{"items":[]}`
+
+	// Lock writing mutex to make sure the pages are not changed during reading
+	client.writingMutex.Lock()
+	defer client.writingMutex.Unlock()
+
 	for {
 		// Get URL path with offset and limit set
-		urlPath := pathWithOffset(path, offset, limit)
+		urlPath := pathWithOffset(path, offset, maxItems)
 
 		// Execute query
-		raw, err := client.Get(urlPath, mods...)
+		raw, err := client.get(urlPath, mods...)
 		if err != nil {
 			return raw, err
-		}
-
-		// If this is first request and no more pages exist, return the response
-		if offset == 0 && !raw.Get("paging.next.0").Exists() {
-			return raw, nil
 		}
 
 		// Check if there are any items in the response
@@ -337,9 +352,11 @@ func (client *Client) GetAll(path string, mods ...func(*Req)) (Res, error) {
 			return gjson.Parse("null"), fmt.Errorf("no items found in response")
 		}
 
-		resItems := items.String()
-		// Remove first and last character (square brackets) and attach to fullOutput
-		fullOutput, _ = sjson.SetRaw(fullOutput, "items.-1", resItems[1:len(resItems)-1])
+		// Remove first and last character (square brackets) from the output
+		// If resItems is not empty, attach it to full output
+		if resItems := items.String()[1 : len(items.String())-1]; resItems != "" {
+			fullOutput, _ = sjson.SetRaw(fullOutput, "items.-1", resItems)
+		}
 
 		// If there are no more pages, break the loop
 		if !raw.Get("paging.next.0").Exists() {
@@ -348,14 +365,14 @@ func (client *Client) GetAll(path string, mods ...func(*Req)) (Res, error) {
 		}
 
 		// Increase offset to get next bulk of data
-		offset += limit
+		offset += maxItems
 	}
 }
 
-// Get makes a GET request and returns a GJSON result.
+// get makes a GET request and returns a GJSON result.
 // It does the exact request it is told to do.
 // Results will be the raw data structure as returned by FMC
-func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
+func (client *Client) get(path string, mods ...func(*Req)) (Res, error) {
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
