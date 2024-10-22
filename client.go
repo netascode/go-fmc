@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/juju/ratelimit"
 )
@@ -24,6 +25,9 @@ const DefaultMaxRetries int = 3
 const DefaultBackoffMinDelay int = 2
 const DefaultBackoffMaxDelay int = 60
 const DefaultBackoffDelayFactor float64 = 3
+
+// maximum number of Items retrieved in a single GET request
+var maxItems = 1000
 
 // Client is an HTTP FMC client.
 // Use fmc.NewClient to initiate a client.
@@ -302,9 +306,73 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 	return client.HttpClient.Do(req.HttpReq)
 }
 
-// Get makes a GET request and returns a GJSON result.
-// Results will be the raw data structure as returned by FMC
+// Get makes a GET requests and returns a GJSON result.
+// It handles pagination and returns all items in a single response.
 func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
+	// Check if path contains words 'limit' or 'offset'
+	// If so, assume user is doing a paginated request and return the raw data
+	if strings.Contains(path, "limit") || strings.Contains(path, "offset") {
+		return client.get(path, mods...)
+	}
+
+	// Execute query as provided by user
+	raw, err := client.get(path, mods...)
+	if err != nil {
+		return raw, err
+	}
+
+	// If there are no more pages, return the response
+	if !raw.Get("paging.next.0").Exists() {
+		return raw, nil
+	}
+
+	log.Printf("[DEBUG] Paginated response detected")
+
+	// Otherwise discard previous response and get all pages
+	offset := 0
+	fullOutput := `{"items":[]}`
+
+	// Lock writing mutex to make sure the pages are not changed during reading
+	client.writingMutex.Lock()
+	defer client.writingMutex.Unlock()
+
+	for {
+		// Get URL path with offset and limit set
+		urlPath := pathWithOffset(path, offset, maxItems)
+
+		// Execute query
+		raw, err := client.get(urlPath, mods...)
+		if err != nil {
+			return raw, err
+		}
+
+		// Check if there are any items in the response
+		items := raw.Get("items")
+		if !items.Exists() {
+			return gjson.Parse("null"), fmt.Errorf("no items found in response")
+		}
+
+		// Remove first and last character (square brackets) from the output
+		// If resItems is not empty, attach it to full output
+		if resItems := items.String()[1 : len(items.String())-1]; resItems != "" {
+			fullOutput, _ = sjson.SetRaw(fullOutput, "items.-1", resItems)
+		}
+
+		// If there are no more pages, break the loop
+		if !raw.Get("paging.next.0").Exists() {
+			// Create new response with all the items
+			return gjson.Parse(fullOutput), nil
+		}
+
+		// Increase offset to get next bulk of data
+		offset += maxItems
+	}
+}
+
+// get makes a GET request and returns a GJSON result.
+// It does the exact request it is told to do.
+// Results will be the raw data structure as returned by FMC
+func (client *Client) get(path string, mods ...func(*Req)) (Res, error) {
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
@@ -498,4 +566,14 @@ func (client *Client) GetFMCVersion() error {
 	client.FMCVersion = fmcVersion.String()
 
 	return nil
+}
+
+// Create URL path with offset and limit
+func pathWithOffset(path string, offset, limit int) string {
+	sep := "?"
+	if strings.Contains(path, sep) {
+		sep = "&"
+	}
+
+	return fmt.Sprintf("%s%soffset=%d&limit=%d", path, sep, offset, limit)
 }
