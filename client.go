@@ -512,10 +512,10 @@ func (client *Client) Authenticate() error {
 	var err error
 	client.authenticationMutex.Lock()
 	// Check if we can attempt to refresh the token (there is old token, it's between 25 and 29 minutes since last refresh, and less than 3 refreshes done)
-	// In any other case, perform full authentication
 	if client.AuthToken != "" && time.Since(client.LastRefresh) > 1500*time.Second && time.Since(client.LastRefresh) < 1740*time.Second && client.RefreshCount < 3 {
 		err = client.Refresh()
-	} else {
+		// Check if we need to login (no token available or more than 25 minutes since last refresh)
+	} else if client.AuthToken == "" || time.Since(client.LastRefresh) >= 1500*time.Second {
 		err = client.Login()
 	}
 	client.authenticationMutex.Unlock()
