@@ -137,6 +137,30 @@ func TestClientGet(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestClientGetRetry(t *testing.T) {
+	defer gock.Off()
+	var err error
+
+	// Client will try to get FMC version on creation, so we need to mock those
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
+
+	// Prepare client and intercept
+	httpClient := &http.Client{}
+	gock.InterceptClient(httpClient)
+
+	// Create client
+	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
+	client.AuthToken = "ABC"
+	client.LastRefresh = time.Now()
+
+	// First request should fail, subsequent should be successful
+	gock.New(testURL).Get("/url").Reply(400).BodyString(`{"error":{"category":"FRAMEWORK","messages":[{"description":"Search Service n.a. Please try again."}],"severity":"ERROR"}}`)
+	gock.New(testURL).Get("/url").Reply(200)
+	_, err = client.Get("/url")
+	assert.NoError(t, err)
+}
+
 // TestClientDeleteDn tests the Client::Delete method.
 func TestClientDelete(t *testing.T) {
 	defer gock.Off()

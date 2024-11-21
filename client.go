@@ -273,6 +273,12 @@ func (client *Client) Do(req Req) (Res, error) {
 				}
 				req.HttpReq.Header.Set("X-auth-access-token", client.AuthToken)
 				continue
+			} else if desc := res.Get("error.messages.0.description"); desc.Exists() {
+				// FMC may return HTTP response code 400 with a message "please try again"
+				if strings.Contains(strings.ToLower(desc.String()), "please try again") {
+					log.Printf("[ERROR] HTTP Request failed with 'please try again'. Retrying.")
+					continue
+				}
 			} else {
 				log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 				log.Printf("[DEBUG] Exit from Do method")
