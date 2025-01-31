@@ -279,11 +279,11 @@ func (client *Client) Do(req Req) (Res, error) {
 					log.Printf("[ERROR] HTTP Request failed with 'please try again'. Retrying.")
 					continue
 				}
-			} else {
-				log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-				log.Printf("[DEBUG] Exit from Do method")
-				return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 			}
+			// In case any previous conditions don't `continue`, return error
+			log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
+			log.Printf("[DEBUG] Exit from Do method")
+			return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 		}
 	}
 

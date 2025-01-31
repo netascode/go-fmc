@@ -154,10 +154,31 @@ func TestClientGetRetry(t *testing.T) {
 	client.AuthToken = "ABC"
 	client.LastRefresh = time.Now()
 
+	// Request should fail
+	gock.New(testURL).Get("/url_400").Reply(400)
+	_, err = client.Get("/url_400")
+	assert.Error(t, err)
+
 	// First request should fail, subsequent should be successful
-	gock.New(testURL).Get("/url").Reply(400).BodyString(`{"error":{"category":"FRAMEWORK","messages":[{"description":"Search Service n.a. Please try again."}],"severity":"ERROR"}}`)
-	gock.New(testURL).Get("/url").Reply(200)
-	_, err = client.Get("/url")
+	gock.New(testURL).Get("/url_400_try_again").Reply(400).BodyString(`{"error":{"category":"FRAMEWORK","messages":[{"description":"Search Service n.a. Please try again."}],"severity":"ERROR"}}`)
+	gock.New(testURL).Get("/url_400_try_again").Reply(200)
+	_, err = client.Get("/url_400_try_again")
+	assert.NoError(t, err)
+
+	// All requests should fail, as re-try counter is exceeded
+	gock.New(testURL).Get("/url_400_try_again_exceed_limit").Reply(400).BodyString(`{"error":{"category":"FRAMEWORK","messages":[{"description":"Search Service n.a. Please try again."}],"severity":"ERROR"}}`)
+	gock.New(testURL).Get("/url_400_try_again_exceed_limit").Reply(400).BodyString(`{"error":{"category":"FRAMEWORK","messages":[{"description":"Search Service n.a. Please try again."}],"severity":"ERROR"}}`)
+	gock.New(testURL).Get("/url_400_try_again_exceed_limit").Reply(400).BodyString(`{"error":{"category":"FRAMEWORK","messages":[{"description":"Search Service n.a. Please try again."}],"severity":"ERROR"}}`)
+	gock.New(testURL).Get("/url_400_try_again_exceed_limit").Reply(400).BodyString(`{"error":{"category":"FRAMEWORK","messages":[{"description":"Search Service n.a. Please try again."}],"severity":"ERROR"}}`)
+	_, err = client.Get("/url_400_try_again_exceed_limit")
+	assert.Error(t, err)
+
+	// First three request should fail, final one should be successful
+	gock.New(testURL).Get("/url_510").Reply(510)
+	gock.New(testURL).Get("/url_510").Reply(510)
+	gock.New(testURL).Get("/url_510").Reply(510)
+	gock.New(testURL).Get("/url_510").Reply(200)
+	_, err = client.Get("/url_510")
 	assert.NoError(t, err)
 }
 
