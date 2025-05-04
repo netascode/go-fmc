@@ -85,6 +85,7 @@ type Client struct {
 func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Proxy:           http.ProxyFromEnvironment,
 	}
 
 	cookieJar, _ := cookiejar.New(nil)
