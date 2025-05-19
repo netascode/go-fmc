@@ -2,7 +2,7 @@
 
 # go-fmc
 
-`go-fmc` is a Go client library for Cisco Secure FMC (Firewall Management Center). It is based on Nathan's excellent [goaci](https://github.com/brightpuddle/goaci) module and features a simple, extensible API and [advanced JSON manipulation](#result-manipulation).
+`go-fmc` is a Go client library for Cisco Secure FMC (Firewall Management Center) and cdFMC (Cloud-Delivered FMC). It is based on Nathan's excellent [goaci](https://github.com/brightpuddle/goaci) module and features a simple, extensible API and [advanced JSON manipulation](#result-manipulation).
 
 ## Getting Started
 
@@ -14,6 +14,7 @@ To start using `go-fmc`, install Go and `go get`:
 
 ### Basic Usage
 
+#### Self-managed FMC
 ```go
 package main
 
@@ -27,7 +28,23 @@ func main() {
 }
 ```
 
-This will print something like:
+#### Cloud-managed FMC
+```go
+package main
+
+import "github.com/netascode/go-fmc"
+
+func main() {
+    client, _ := fmc.NewClientCDFMC("https://<YOUR_TENNANT_URL>.cdo.cisco.com", "apiToken")
+
+    res, _ := client.Get("/api/fmc_config/v1/domain/{DOMAIN_UUID}/object/networks")
+    println(res.Get("items.0.name").String())
+}
+```
+
+#### Output
+
+Both of those examples will print something like:
 
 ```
 any-ipv4

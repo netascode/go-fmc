@@ -128,8 +128,8 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 
 // Create a new cdFMC HTTP client.
 func NewClientCDFMC(url, apiToken string, mods ...func(*Client)) (Client, error) {
-	// Set client mode to IsCDFMC
-	mods = append(mods, IsCDFMC(true))
+	// Set client mode to cdFMC
+	mods = append(mods, cdFMC(true))
 
 	// Create client as usual. Username is not used.
 	client, err := NewClient(url, "", apiToken, mods...)
@@ -209,7 +209,7 @@ func BackoffDelayFactor(x float64) func(*Client) {
 }
 
 // IsCDFMC sets connector mode to cdFMC (true) or FMC (false).
-func IsCDFMC(x bool) func(*Client) {
+func cdFMC(x bool) func(*Client) {
 	return func(client *Client) {
 		client.IsCDFMC = x
 	}
