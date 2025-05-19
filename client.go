@@ -45,6 +45,8 @@ type Client struct {
 	AuthToken string
 	// Refresh token is the current authentication token
 	RefreshToken string
+	// UserAgent is the HTTP User-Agent string
+	UserAgent string
 	// Usr is the FMC username.
 	Usr string
 	// Pwd is the FMC password.
@@ -98,6 +100,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	client := Client{
 		HttpClient:          &httpClient,
 		Url:                 url,
+		UserAgent:           "go-fmc netascode",
 		Usr:                 usr,
 		Pwd:                 pwd,
 		MaxRetries:          DefaultMaxRetries,
@@ -125,6 +128,13 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 func CustomHttpClient(httpClient *http.Client) func(*Client) {
 	return func(client *Client) {
 		client.HttpClient = httpClient
+	}
+}
+
+// UserAgent modifies the HTTP user agent string. Default value is 'go-meraki netascode'.
+func UserAgent(x string) func(*Client) {
+	return func(client *Client) {
+		client.UserAgent = x
 	}
 }
 
@@ -211,6 +221,7 @@ func (client *Client) Do(req Req) (Res, error) {
 	req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken)
 	req.HttpReq.Header.Add("Content-Type", "application/json")
 	req.HttpReq.Header.Add("Accept", "application/json")
+	req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 	// retain the request body across multiple attempts
 	var body []byte
 	if req.HttpReq.Body != nil {
