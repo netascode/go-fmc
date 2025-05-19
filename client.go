@@ -45,6 +45,8 @@ type Client struct {
 	AuthToken string
 	// Refresh token is the current authentication token
 	RefreshToken string
+	// UserAgent is the HTTP User-Agent string
+	UserAgent string
 	// Usr is the FMC username. Not used for cdFMC.
 	Usr string
 	// Pwd is the FMC password or cdFMC API token
@@ -100,6 +102,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	client := Client{
 		HttpClient:          &httpClient,
 		Url:                 url,
+		UserAgent:           "go-fmc netascode",
 		Usr:                 usr,
 		Pwd:                 pwd,
 		MaxRetries:          DefaultMaxRetries,
@@ -153,6 +156,13 @@ func NewClientCDFMC(url, apiToken string, mods ...func(*Client)) (Client, error)
 func CustomHttpClient(httpClient *http.Client) func(*Client) {
 	return func(client *Client) {
 		client.HttpClient = httpClient
+	}
+}
+
+// UserAgent modifies the HTTP user agent string. Default value is 'go-meraki netascode'.
+func UserAgent(x string) func(*Client) {
+	return func(client *Client) {
+		client.UserAgent = x
 	}
 }
 
@@ -250,6 +260,7 @@ func (client *Client) Do(req Req) (Res, error) {
 	}
 	req.HttpReq.Header.Add("Content-Type", "application/json")
 	req.HttpReq.Header.Add("Accept", "application/json")
+	req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 	// retain the request body across multiple attempts
 	var body []byte
 	if req.HttpReq.Body != nil {
@@ -475,6 +486,7 @@ func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
 func (client *Client) Login() error {
 	for attempts := 0; ; attempts++ {
 		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/generatetoken", strings.NewReader(""), NoLogPayload)
+		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		req.HttpReq.SetBasicAuth(client.Usr, client.Pwd)
 		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
@@ -523,6 +535,7 @@ func (client *Client) Refresh() error {
 		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
 		req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken)
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.RefreshToken)
+		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
