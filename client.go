@@ -71,6 +71,8 @@ type Client struct {
 	Domains map[string]string
 	// FMC Version
 	FMCVersion string
+	// Is this cdFMC connection
+	IsCDFMC bool
 
 	RateLimiterBucket *ratelimit.Bucket
 
@@ -116,6 +118,32 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	err := client.GetFMCVersion()
 	if err != nil {
 		return client, err
+	}
+
+	return client, nil
+}
+
+// Create a new cdFMC HTTP client.
+func NewClientCDFMC(url, apiToken string, mods ...func(*Client)) (Client, error) {
+	// Set client mode to IsCDFMC
+	mods = append(mods, IsCDFMC(true))
+
+	// Create client as usual. Username is not used.
+	client, err := NewClient(url, "", apiToken, mods...)
+	if err != nil {
+		return client, err
+	}
+
+	// Get the Global Domain UUID. cdFMC does not support multi-domain.
+	// Global UUID is fixed (e276abec-e0f2-11e3-8169-6d9ed49b625f), though we get it from the cdFMC just in case.
+	res, err := client.Get("/api/fmc_platform/v1/info/domain")
+	if err != nil {
+		return client, err
+	}
+	if uuid := res.Get("items.0.uuid"); !uuid.Exists() {
+		return client, fmt.Errorf("failed to retrieve domain UUID from: %s", res.String())
+	} else {
+		client.DomainUUID = uuid.String()
 	}
 
 	return client, nil
@@ -170,6 +198,13 @@ func BackoffDelayFactor(x float64) func(*Client) {
 	}
 }
 
+// IsCDFMC sets connector mode to cdFMC (true) or FMC (false).
+func IsCDFMC(x bool) func(*Client) {
+	return func(client *Client) {
+		client.IsCDFMC = x
+	}
+}
+
 // NewReq creates a new Req request for this client.
 // Use a "{DOMAIN_UUID}" placeholder in the URI to be replaced with the domain UUID.
 func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Req)) (Req, error) {
@@ -208,7 +243,11 @@ func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Re
 //	res, _ := client.Do(req)
 func (client *Client) Do(req Req) (Res, error) {
 	// add token
-	req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken)
+	if client.IsCDFMC {
+		req.HttpReq.Header.Add("Authorization", "Bearer "+client.Pwd)
+	} else {
+		req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken)
+	}
 	req.HttpReq.Header.Add("Content-Type", "application/json")
 	req.HttpReq.Header.Add("Accept", "application/json")
 	// retain the request body across multiple attempts
@@ -260,7 +299,7 @@ func (client *Client) Do(req Req) (Res, error) {
 			} else if httpRes.StatusCode == 429 || (httpRes.StatusCode >= 500 && httpRes.StatusCode <= 599) {
 				log.Printf("[ERROR] HTTP Request failed: StatusCode %v, Retries: %v", httpRes.StatusCode, attempts)
 				continue
-			} else if httpRes.StatusCode == 401 {
+			} else if httpRes.StatusCode == 401 && !client.IsCDFMC {
 				// There are bugs in FMC, where the sessions are invalidated out of the blue
 				// In case such a situation is detected, new authentication is forced
 				log.Printf("[DEBUG] Invalid session detected. Forcing reauthentication")
@@ -516,6 +555,11 @@ func (client *Client) Refresh() error {
 
 // Login if no token available.
 func (client *Client) Authenticate() error {
+	// cdFMC uses fixed token, no need to do separate authentication
+	if client.IsCDFMC {
+		return nil
+	}
+
 	var err error
 	client.authenticationMutex.Lock()
 	// Check if we can attempt to refresh the token (there is old token, it's between 25 and 29 minutes since last refresh, and less than 3 refreshes done)
