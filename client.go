@@ -45,9 +45,9 @@ type Client struct {
 	AuthToken string
 	// Refresh token is the current authentication token
 	RefreshToken string
-	// Usr is the FMC username.
+	// Usr is the FMC username. Not used for cdFMC.
 	Usr string
-	// Pwd is the FMC password.
+	// Pwd is the FMC password or cdFMC API token
 	Pwd string
 	// Insecure determines if insecure https connections are allowed.
 	Insecure bool
@@ -65,9 +65,9 @@ type Client struct {
 	LastRefresh time.Time
 	// RefreshCount is the number to authentication token refreshes with the same refresh token
 	RefreshCount int
-	// DomainUUID is the UUID of the global domain returned when generating a token
+	// DomainUUID is the UUID of the user login domain.
 	DomainUUID string
-	// Map of domain names to domain UUIDs
+	// Map of domain names to domain UUIDs. Not applicable for cdFMC
 	Domains map[string]string
 	// FMC Version
 	FMCVersion string
