@@ -1,3 +1,7 @@
+## 0.1.2 (Unreleased)
+
+- Add User-Agent to HTTP requests
+
 ## 0.1.1
 
 - Honor proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` environment variables)
