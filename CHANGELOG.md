@@ -1,6 +1,7 @@
 ## 0.1.2 (Unreleased)
 
 - Add User-Agent to HTTP requests
+- Add cdFMC support (`func NewClientCDFMC()`)
 
 ## 0.1.1
 
