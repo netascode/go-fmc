@@ -447,6 +447,7 @@ func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
 func (client *Client) Login() error {
 	for attempts := 0; ; attempts++ {
 		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/generatetoken", strings.NewReader(""), NoLogPayload)
+		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		req.HttpReq.SetBasicAuth(client.Usr, client.Pwd)
 		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
@@ -495,6 +496,7 @@ func (client *Client) Refresh() error {
 		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
 		req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken)
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.RefreshToken)
+		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
