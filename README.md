@@ -15,6 +15,7 @@ To start using `go-fmc`, install Go and `go get`:
 ### Basic Usage
 
 #### Self-managed FMC
+
 ```go
 package main
 
@@ -29,6 +30,7 @@ func main() {
 ```
 
 #### Cloud-managed FMC
+
 ```go
 package main
 
