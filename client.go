@@ -208,7 +208,7 @@ func BackoffDelayFactor(x float64) func(*Client) {
 	}
 }
 
-// IsCDFMC sets connector mode to cdFMC (true) or FMC (false).
+// cdFMC sets connector mode to cdFMC (true) or FMC (false).
 func cdFMC(x bool) func(*Client) {
 	return func(client *Client) {
 		client.IsCDFMC = x
