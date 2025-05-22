@@ -69,7 +69,7 @@ type Client struct {
 	RefreshCount int
 	// DomainUUID is the UUID of the user login domain.
 	DomainUUID string
-	// Map of domain names to domain UUIDs. Not applicable for cdFMC
+	// Map of domain names to domain UUIDs.
 	Domains map[string]string
 	// FMC Version
 	FMCVersion string
@@ -147,6 +147,9 @@ func NewClientCDFMC(url, apiToken string, mods ...func(*Client)) (Client, error)
 		return client, fmt.Errorf("failed to retrieve domain UUID from: %s", res.String())
 	} else {
 		client.DomainUUID = uuid.String()
+		client.Domains = map[string]string{
+			"Global": uuid.String(),
+		}
 	}
 
 	return client, nil

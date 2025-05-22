@@ -1,3 +1,7 @@
+## 0.2.1 (Unreleased)
+
+- Fix: cdFMC client fails if user sets `DomainName` modifier, even it was for `Global` domain
+
 ## 0.2.0
 
 - Add User-Agent to HTTP requests
