@@ -1,6 +1,7 @@
 ## 0.2.1 (Unreleased)
 
 - Fix: cdFMC client fails if user sets `DomainName` modifier, even it was for `Global` domain
+- Fix: FMC may return an error indicating, "Retry the operation after some time." In such cases, the client will adhere to this guidance rather than failing immediately.
 
 ## 0.2.0
 
