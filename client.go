@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-version"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
@@ -71,8 +72,10 @@ type Client struct {
 	DomainUUID string
 	// Map of domain names to domain UUIDs.
 	Domains map[string]string
-	// FMC Version
+	// FMC Version string as returned by FMC - ex. 7.7.0 (build 91)
 	FMCVersion string
+	// FMC Version parsed to go-version library - ex. 7.7.0
+	FMCVersionParsed *version.Version
 	// Is this cdFMC connection
 	IsCDFMC bool
 
@@ -120,7 +123,23 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 
 	err := client.GetFMCVersion()
 	if err != nil {
+		log.Printf("[ERROR] Failed to retrieve FMC version: %s", err.Error())
 		return client, err
+	}
+
+	// Compile FMC version to go-version
+	client.FMCVersionParsed, err = version.NewVersion(strings.Split(client.FMCVersion, " ")[0])
+	if err != nil {
+		log.Printf("[ERROR] Failed to parse FMC version (%s): %s", client.FMCVersion, err.Error())
+		return client, fmt.Errorf("failed to parse FMC version (%s): %s", client.FMCVersion, err.Error())
+	}
+
+	log.Printf("[DEBUG] FMC Version: %s, FMC Version Parsed: %s", client.FMCVersion, client.FMCVersionParsed.String())
+
+	// FMC 7.4.1, 6.6.0 and later have increased rate limits
+	if client.FMCVersionParsed.GreaterThanOrEqual(version.Must(version.NewVersion("7.4.1"))) {
+		log.Printf("[DEBUG] Increasing rate limit to 5 req/s (300 req/min)")
+		client.RateLimiterBucket = ratelimit.NewBucketWithRate(5, 1) // 5 req/s = 300 req/min
 	}
 
 	return client, nil
