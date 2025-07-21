@@ -90,6 +90,7 @@ type Client struct {
 //
 //	client, _ := NewClient("fmc1.cisco.com", "user", "password", RequestTimeout(120))
 func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
+	log.Printf("[DEBUG] go-fmc version " + Version)
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		Proxy:           http.ProxyFromEnvironment,
@@ -105,7 +106,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	client := Client{
 		HttpClient:          &httpClient,
 		Url:                 url,
-		UserAgent:           "go-fmc netascode",
+		UserAgent:           defaultUserAgent(),
 		Usr:                 usr,
 		Pwd:                 pwd,
 		MaxRetries:          DefaultMaxRetries,
@@ -295,7 +296,7 @@ func (client *Client) Do(req Req) (Res, error) {
 		httpRes, err := client.do(req, body)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] HTTP Connection error occured: %+v", err)
+				log.Printf("[ERROR] HTTP Connection error occurred: %+v", err)
 				log.Printf("[DEBUG] Exit from Do method")
 				return Res{}, err
 			} else {
@@ -336,13 +337,20 @@ func (client *Client) Do(req Req) (Res, error) {
 				// There are bugs in FMC, where the sessions are invalidated out of the blue
 				// In case such a situation is detected, new authentication is forced
 				log.Printf("[DEBUG] Invalid session detected. Forcing reauthentication")
-				// Clear AuthToken (which is invalid anyways). This also ensures that Authenticate does full authentication
-				client.AuthToken = ""
-				// Force reauthentication, client.Authenticate() takes care of mutexes, hence not calling Login() directly
-				err := client.Authenticate()
-				if err != nil {
-					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
-					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
+
+				// Lock authentication mutex to prevent other goroutines from modifying the authentication state
+				client.authenticationMutex.Lock()
+				// Create local error handling variable, which other goroutines cannot modify
+				var authErr error
+				// Check if there was a recent reauthentication, if not, try to reauthenticate
+				if time.Since(client.LastRefresh) >= 1500*time.Second {
+					authErr = client.Login()
+				}
+				client.authenticationMutex.Unlock()
+
+				if authErr != nil {
+					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", authErr.Error())
+					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", authErr.Error())
 				}
 				req.HttpReq.Header.Set("X-auth-access-token", client.AuthToken)
 				continue
