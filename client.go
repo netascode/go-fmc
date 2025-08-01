@@ -296,11 +296,11 @@ func (client *Client) Do(req Req) (Res, error) {
 		httpRes, err := client.do(req, body)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] HTTP Connection error occurred: %+v", err)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] HTTP Connection error occurred: %+v", req.RequestID, err)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return Res{}, err
 			} else {
-				log.Printf("[ERROR] HTTP Connection failed: %s, retries: %v", err, attempts)
+				log.Printf("[ERROR] [ReqID: %s] HTTP Connection failed: %s, retries: %v", req.RequestID, err, attempts)
 				continue
 			}
 		}
@@ -309,47 +309,47 @@ func (client *Client) Do(req Req) (Res, error) {
 		bodyBytes, err := io.ReadAll(httpRes.Body)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] Cannot decode response body: %+v", err)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %+v", req.RequestID, err)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return Res{}, err
 			} else {
-				log.Printf("[ERROR] Cannot decode response body: %s, retries: %v", err, attempts)
+				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %s, retries: %v", req.RequestID, err, attempts)
 				continue
 			}
 		}
 		res = Res(gjson.ParseBytes(bodyBytes))
 		if req.LogPayload {
-			log.Printf("[DEBUG] HTTP Response: %s", res.Raw)
+			log.Printf("[DEBUG] [ReqID: %s] HTTP Response: %s", req.RequestID, res.Raw)
 		}
 
 		if httpRes.StatusCode >= 200 && httpRes.StatusCode <= 299 {
-			log.Printf("[DEBUG] Exit from Do method")
+			log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 			break
 		} else {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v", req.RequestID, httpRes.StatusCode)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 			} else if httpRes.StatusCode == 429 || (httpRes.StatusCode >= 500 && httpRes.StatusCode <= 599) {
-				log.Printf("[ERROR] HTTP Request failed: StatusCode %v, Retries: %v", httpRes.StatusCode, attempts)
+				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v, Retries: %v", req.RequestID, httpRes.StatusCode, attempts)
 				continue
 			} else if httpRes.StatusCode == 401 && !client.IsCDFMC {
 				// There are bugs in FMC, where the sessions are invalidated out of the blue
 				// In case such a situation is detected, new authentication is forced
-				log.Printf("[DEBUG] Invalid session detected. Forcing reauthentication")
+				log.Printf("[DEBUG] [ReqID: %s] Invalid session detected. Forcing reauthentication", req.RequestID)
 
 				// Lock authentication mutex to prevent other goroutines from modifying the authentication state
 				client.authenticationMutex.Lock()
 				// Create local error handling variable, which other goroutines cannot modify
 				var authErr error
-				// Check if there was a recent reauthentication, if not, try to reauthenticate
-				if time.Since(client.LastRefresh) >= 1500*time.Second {
+				// If there was no recent re-authentication, refresh the token
+				if time.Since(client.LastRefresh) >= 2*time.Minute {
 					authErr = client.Login()
 				}
 				client.authenticationMutex.Unlock()
 
 				if authErr != nil {
-					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", authErr.Error())
+					log.Printf("[DEBUG] [ReqID: %s] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", req.RequestID, authErr.Error())
 					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", authErr.Error())
 				}
 				req.HttpReq.Header.Set("X-auth-access-token", client.AuthToken)
@@ -363,14 +363,14 @@ func (client *Client) Do(req Req) (Res, error) {
 				}
 			}
 			// In case any previous conditions don't `continue`, return error
-			log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-			log.Printf("[DEBUG] Exit from Do method")
+			log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v", req.RequestID, httpRes.StatusCode)
+			log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 			return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 		}
 	}
 
 	if res.Get("error.messages.0").Exists() {
-		log.Printf("[ERROR] JSON error: %s", res.Get("error.messages.0").String())
+		log.Printf("[ERROR] [ReqID: %s] JSON error: %s", req.RequestID, res.Get("error.messages.0").String())
 		return res, fmt.Errorf("JSON error: %s", res.Get("error.messages.0").String())
 	}
 	return res, nil
@@ -386,9 +386,9 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 
 	req.HttpReq.Body = io.NopCloser(bytes.NewBuffer(body))
 	if req.LogPayload {
-		log.Printf("[DEBUG] HTTP Request: %s, %s, %s", req.HttpReq.Method, req.HttpReq.URL, string(body))
+		log.Printf("[DEBUG] [ReqID: %s] HTTP Request: %s, %s, %s", req.RequestID, req.HttpReq.Method, req.HttpReq.URL, string(body))
 	} else {
-		log.Printf("[DEBUG] HTTP Request: %s, %s", req.HttpReq.Method, req.HttpReq.URL)
+		log.Printf("[DEBUG] [ReqID: %s] HTTP Request: %s, %s", req.RequestID, req.HttpReq.Method, req.HttpReq.URL)
 	}
 
 	return client.HttpClient.Do(req.HttpReq)
@@ -397,6 +397,9 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 // Get makes a GET requests and returns a GJSON result.
 // It handles pagination and returns all items in a single response.
 func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
+	// Generate Request ID for tracking request inside go-fmc
+	mods = append(mods, setRequestID(generateRequestID(8)))
+
 	// Check if path contains words 'limit' or 'offset'
 	// If so, assume user is doing a paginated request and return the raw data
 	if strings.Contains(path, "limit") || strings.Contains(path, "offset") {
@@ -474,6 +477,8 @@ func (client *Client) get(path string, mods ...func(*Req)) (Res, error) {
 
 // Delete makes a DELETE request.
 func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
+	// Generate Request ID for tracking request inside go-fmc
+	mods = append(mods, setRequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
@@ -488,6 +493,8 @@ func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
 // Post makes a POST request and returns a GJSON result.
 // Hint: Use the Body struct to easily create POST body data.
 func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
+	// Generate Request ID for tracking request inside go-fmc
+	mods = append(mods, setRequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
@@ -502,6 +509,8 @@ func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
 // Put makes a PUT request and returns a GJSON result.
 // Hint: Use the Body struct to easily create PUT body data.
 func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
+	// Generate Request ID for tracking request inside go-fmc
+	mods = append(mods, setRequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err

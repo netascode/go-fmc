@@ -1,7 +1,8 @@
 ## 0.2.2 (Unreleased)
 
-- Fix: Improper handling of re-authentication may disrupt communication with the FMC
-- Enh: FMC 7.4.1, 7.6.0 and later releases have rate-limit increased to 300 req/min
+- Fix: Improper handling of re-authentication may disrupt communication with FMC
+- Enh: Support for increased rate-limit (300 req/min) in FMC 7.4.1, 7.6.0 and later
+- Enh: Introduced ReqID to correlate events in the logs
 
 ## 0.2.1
 
