@@ -70,7 +70,7 @@ func DomainName(x string) func(*Req) {
 }
 
 // Set request ID
-func setRequestID(x string) func(*Req) {
+func RequestID(x string) func(*Req) {
 	return func(req *Req) {
 		req.RequestID = x
 	}

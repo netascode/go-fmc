@@ -371,7 +371,7 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 // It handles pagination and returns all items in a single response.
 func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, setRequestID(generateRequestID(8)))
+	mods = append(mods, RequestID(generateRequestID(8)))
 
 	// Check if path contains words 'limit' or 'offset'
 	// If so, assume user is doing a paginated request and return the raw data
@@ -451,7 +451,7 @@ func (client *Client) get(path string, mods ...func(*Req)) (Res, error) {
 // Delete makes a DELETE request.
 func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
 	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, setRequestID(generateRequestID(8)))
+	mods = append(mods, RequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
@@ -467,7 +467,7 @@ func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
 // Hint: Use the Body struct to easily create POST body data.
 func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
 	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, setRequestID(generateRequestID(8)))
+	mods = append(mods, RequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
@@ -483,7 +483,7 @@ func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
 // Hint: Use the Body struct to easily create PUT body data.
 func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
 	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, setRequestID(generateRequestID(8)))
+	mods = append(mods, RequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
