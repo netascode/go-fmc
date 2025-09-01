@@ -1,6 +1,7 @@
 ## 0.2.2 (Unreleased)
 
 - Enh: Introduced ReqID to correlate events in the logs
+- Enh: FMC 7.4.1, 7.6.0 and later releases have rate-limit increased to 300 req/min
 
 ## 0.2.1
 
