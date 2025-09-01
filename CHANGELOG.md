@@ -1,3 +1,7 @@
+## 0.2.2 (Unreleased)
+
+- Enh: Introduced ReqID to correlate events in the logs
+
 ## 0.2.1
 
 - Fix: cdFMC client fails if user sets `DomainName` modifier, even it was for `Global` domain
