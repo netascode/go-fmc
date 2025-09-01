@@ -32,6 +32,23 @@ func testClient() Client {
 	return client
 }
 
+func testClient770() Client {
+	defer gock.Off()
+
+	// Client will try to get FMC version on creation, so we need to mock those
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.7.0 (build 123)"}]}`)
+
+	// Prepare client and intercept
+	httpClient := &http.Client{}
+	gock.InterceptClient(httpClient)
+
+	// Create client
+	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(0))
+
+	return client
+}
+
 func authenticatedTestClient() Client {
 	client := testClient()
 	client.AuthToken = "ABC"
@@ -88,6 +105,21 @@ func TestClientGetFMCVersion(t *testing.T) {
 
 	// Version already known
 	assert.Equal(t, "7.2.4 (build 123)", client.FMCVersion)
+
+	// Version parsed
+	assert.Equal(t, "7.2.4", client.FMCVersionParsed.String())
+}
+
+func TestClientRateLimitValue(t *testing.T) {
+	defer gock.Off()
+
+	// Check rate limit for version 7.2.4
+	client := testClient()
+	assert.InDelta(t, 1.97, client.RateLimiterBucket.Rate(), 0.01)
+
+	// Check rate limit for version 7.7.0
+	client = testClient770()
+	assert.InDelta(t, 5.00, client.RateLimiterBucket.Rate(), 0.01)
 }
 
 // TestClientGet tests the Client::Get method.

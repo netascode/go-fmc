@@ -1,3 +1,7 @@
+## 0.2.2 (Unreleased)
+
+- Enh: FMC 7.4.1, 7.6.0 and later releases have rate-limit increased to 300 req/min
+
 ## 0.2.1
 
 - Fix: cdFMC client fails if user sets `DomainName` modifier, even it was for `Global` domain
