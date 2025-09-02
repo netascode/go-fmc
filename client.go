@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-version"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
@@ -74,8 +75,10 @@ type Client struct {
 	DomainUUID string
 	// Map of domain names to domain UUIDs.
 	Domains map[string]string
-	// FMC Version
+	// FMC Version string as returned by FMC - ex. 7.7.0 (build 91)
 	FMCVersion string
+	// FMC Version parsed to go-version library - ex. 7.7.0
+	FMCVersionParsed *version.Version
 	// Is this cdFMC connection
 	IsCDFMC bool
 
@@ -126,7 +129,23 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 
 	err := client.GetFMCVersion()
 	if err != nil {
+		log.Printf("[ERROR] Failed to retrieve FMC version: %s", err.Error())
 		return client, err
+	}
+
+	// Compile FMC version to go-version
+	client.FMCVersionParsed, err = version.NewVersion(strings.Split(client.FMCVersion, " ")[0])
+	if err != nil {
+		log.Printf("[ERROR] Failed to parse FMC version (%s): %s", client.FMCVersion, err.Error())
+		return client, fmt.Errorf("failed to parse FMC version (%s): %s", client.FMCVersion, err.Error())
+	}
+
+	log.Printf("[INFO] FMC Version: %s, FMC Version Parsed: %s", client.FMCVersion, client.FMCVersionParsed.String())
+
+	// FMC 7.4.1, 6.6.0 and later have increased rate limits
+	if client.FMCVersionParsed.GreaterThanOrEqual(version.Must(version.NewVersion("7.4.1"))) {
+		log.Printf("[DEBUG] Increasing rate limit to 5 req/s (300 req/min)")
+		client.RateLimiterBucket = ratelimit.NewBucketWithRate(5, 1) // 5 req/s = 300 req/min
 	}
 
 	return client, nil
@@ -233,9 +252,15 @@ func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*R
 		LogPayload: true,
 		DomainName: "",
 	}
+
 	for _, mod := range mods {
 		mod(&req)
 	}
+
+	if req.RequestID == "" {
+		req.RequestID = generateRequestID(8)
+	}
+
 	if req.DomainName == "" {
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.DomainUUID)
 	} else {
@@ -247,7 +272,7 @@ func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*R
 				availableDomains[i] = k
 				i++
 			}
-			log.Printf("[ERROR] Requested domain not found: requested domain: %s, available domains: %s", req.DomainName, availableDomains)
+			log.Printf("[ERROR] [ReqID: %s] Requested domain not found: requested domain: %s, available domains: %s", req.RequestID, req.DomainName, availableDomains)
 			return Req{}, fmt.Errorf("requested domain not found: requested domain: %s, available domains: %s", req.DomainName, availableDomains)
 		}
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.Domains[req.DomainName])
@@ -288,11 +313,11 @@ func (client *Client) Do(req Req) (Res, error) {
 		httpRes, err := client.do(req, body)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] HTTP Connection error occured: %+v", err)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] HTTP Connection error occurred: %+v", req.RequestID, err)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return Res{}, err
 			} else {
-				log.Printf("[ERROR] HTTP Connection failed: %s, retries: %v", err, attempts)
+				log.Printf("[ERROR] [ReqID: %s] HTTP Connection failed: %s, retries: %v", req.RequestID, err, attempts)
 				continue
 			}
 		}
@@ -302,39 +327,38 @@ func (client *Client) Do(req Req) (Res, error) {
 
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] Cannot decode response body: %+v", err)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %+v", req.RequestID, err)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return Res{}, err
 			} else {
-				log.Printf("[ERROR] Cannot decode response body: %s, retries: %v", err, attempts)
+				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %s, retries: %v", req.RequestID, err, attempts)
 				continue
 			}
 		}
 		res = gjson.ParseBytes(bodyBytes)
 		if req.LogPayload {
-			log.Printf("[DEBUG] HTTP Response: %s", res.Raw)
+			log.Printf("[DEBUG] [ReqID: %s] HTTP Response: %s", req.RequestID, res.Raw)
 		}
 
 		if httpRes.StatusCode >= 200 && httpRes.StatusCode <= 299 {
-			log.Printf("[DEBUG] Exit from Do method")
+			log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 			break
 		} else {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v", req.RequestID, httpRes.StatusCode)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 			} else if httpRes.StatusCode == 429 || (httpRes.StatusCode >= 500 && httpRes.StatusCode <= 599) {
-				log.Printf("[ERROR] HTTP Request failed: StatusCode %v, Retries: %v", httpRes.StatusCode, attempts)
+				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v, Retries: %v", req.RequestID, httpRes.StatusCode, attempts)
 				continue
 			} else if httpRes.StatusCode == 401 && !client.IsCDFMC {
 				// There are bugs in FMC, where the sessions are invalidated out of the blue
 				// In case such a situation is detected, new authentication is forced
-				log.Printf("[DEBUG] Invalid session detected. Forcing reauthentication")
-
+				log.Printf("[DEBUG] [ReqID: %s] Invalid session detected. Forcing reauthentication", req.RequestID)
 				// Force reauthentication, client.Authenticate() takes care of mutexes, hence not calling Login() directly
 				err := client.Authenticate(authToken)
 				if err != nil {
-					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
+					log.Printf("[DEBUG] [ReqID: %s] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", req.RequestID, err.Error())
 					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
 				}
 				authToken = client.AuthToken()
@@ -349,14 +373,14 @@ func (client *Client) Do(req Req) (Res, error) {
 				}
 			}
 			// In case any previous conditions don't `continue`, return error
-			log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-			log.Printf("[DEBUG] Exit from Do method")
+			log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v", req.RequestID, httpRes.StatusCode)
+			log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 			return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 		}
 	}
 
 	if res.Get("error.messages.0").Exists() {
-		log.Printf("[ERROR] JSON error: %s", res.Get("error.messages.0").String())
+		log.Printf("[ERROR] [ReqID: %s] JSON error: %s", req.RequestID, res.Get("error.messages.0").String())
 		return res, fmt.Errorf("JSON error: %s", res.Get("error.messages.0").String())
 	}
 	return res, nil
@@ -372,9 +396,9 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 
 	req.HttpReq.Body = io.NopCloser(bytes.NewBuffer(body))
 	if req.LogPayload {
-		log.Printf("[DEBUG] HTTP Request: %s, %s, %s", req.HttpReq.Method, req.HttpReq.URL, string(body))
+		log.Printf("[DEBUG] [ReqID: %s] HTTP Request: %s, %s, %s", req.RequestID, req.HttpReq.Method, req.HttpReq.URL, string(body))
 	} else {
-		log.Printf("[DEBUG] HTTP Request: %s, %s", req.HttpReq.Method, req.HttpReq.URL)
+		log.Printf("[DEBUG] [ReqID: %s] HTTP Request: %s, %s", req.RequestID, req.HttpReq.Method, req.HttpReq.URL)
 	}
 
 	return client.HttpClient.Do(req.HttpReq)
@@ -405,6 +429,9 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	// Otherwise discard previous response and get all pages
 	offset := 0
 	fullOutput := `{"items":[]}`
+
+	// Generate Request ID for tracking all get requests under a single ID
+	mods = append(mods, RequestID(generateRequestID(8)))
 
 	// Lock writing mutex to make sure the pages are not changed during reading
 	client.writingMutex.Lock()
