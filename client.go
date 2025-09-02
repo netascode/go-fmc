@@ -246,9 +246,15 @@ func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Re
 		LogPayload: true,
 		DomainName: "",
 	}
+
 	for _, mod := range mods {
 		mod(&req)
 	}
+
+	if req.RequestID == "" {
+		req.RequestID = generateRequestID(8)
+	}
+
 	if req.DomainName == "" {
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.DomainUUID)
 	} else {
@@ -389,9 +395,6 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 // Get makes a GET requests and returns a GJSON result.
 // It handles pagination and returns all items in a single response.
 func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
-	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, RequestID(generateRequestID(8)))
-
 	// Check if path contains words 'limit' or 'offset'
 	// If so, assume user is doing a paginated request and return the raw data
 	if strings.Contains(path, "limit") || strings.Contains(path, "offset") {
@@ -414,6 +417,9 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	// Otherwise discard previous response and get all pages
 	offset := 0
 	fullOutput := `{"items":[]}`
+
+	// Generate Request ID for tracking all get requests under a single ID
+	mods = append(mods, RequestID(generateRequestID(8)))
 
 	// Lock writing mutex to make sure the pages are not changed during reading
 	client.writingMutex.Lock()
@@ -469,8 +475,6 @@ func (client *Client) get(path string, mods ...func(*Req)) (Res, error) {
 
 // Delete makes a DELETE request.
 func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
-	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, RequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
@@ -485,8 +489,6 @@ func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
 // Post makes a POST request and returns a GJSON result.
 // Hint: Use the Body struct to easily create POST body data.
 func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
-	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, RequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err
@@ -501,8 +503,6 @@ func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
 // Put makes a PUT request and returns a GJSON result.
 // Hint: Use the Body struct to easily create PUT body data.
 func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
-	// Generate Request ID for tracking request inside go-fmc
-	mods = append(mods, RequestID(generateRequestID(8)))
 	err := client.Authenticate()
 	if err != nil {
 		return Res{}, err

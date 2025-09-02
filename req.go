@@ -52,7 +52,7 @@ type Req struct {
 	LogPayload bool
 	// DomainName is the FMC domain to be used for the request.
 	DomainName string
-	// Unique ID for the request.
+	// ID for the request.
 	RequestID string
 }
 
