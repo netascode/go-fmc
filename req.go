@@ -52,6 +52,8 @@ type Req struct {
 	LogPayload bool
 	// DomainName is the FMC domain to be used for the request.
 	DomainName string
+	// ID for the request.
+	RequestID string
 }
 
 // NoLogPayload prevents logging of payloads.
@@ -64,5 +66,12 @@ func NoLogPayload(req *Req) {
 func DomainName(x string) func(*Req) {
 	return func(req *Req) {
 		req.DomainName = x
+	}
+}
+
+// Set request ID
+func RequestID(x string) func(*Req) {
+	return func(req *Req) {
+		req.RequestID = x
 	}
 }

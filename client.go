@@ -246,9 +246,15 @@ func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Re
 		LogPayload: true,
 		DomainName: "",
 	}
+
 	for _, mod := range mods {
 		mod(&req)
 	}
+
+	if req.RequestID == "" {
+		req.RequestID = generateRequestID(8)
+	}
+
 	if req.DomainName == "" {
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.DomainUUID)
 	} else {
@@ -260,7 +266,7 @@ func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Re
 				availableDomains[i] = k
 				i++
 			}
-			log.Printf("[ERROR] Requested domain not found: requested domain: %s, available domains: %s", req.DomainName, availableDomains)
+			log.Printf("[ERROR] [ReqID: %s] Requested domain not found: requested domain: %s, available domains: %s", req.RequestID, req.DomainName, availableDomains)
 			return Req{}, fmt.Errorf("requested domain not found: requested domain: %s, available domains: %s", req.DomainName, availableDomains)
 		}
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.Domains[req.DomainName])
@@ -295,11 +301,11 @@ func (client *Client) Do(req Req) (Res, error) {
 		httpRes, err := client.do(req, body)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] HTTP Connection error occured: %+v", err)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] HTTP Connection error occurred: %+v", req.RequestID, err)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return Res{}, err
 			} else {
-				log.Printf("[ERROR] HTTP Connection failed: %s, retries: %v", err, attempts)
+				log.Printf("[ERROR] [ReqID: %s] HTTP Connection failed: %s, retries: %v", req.RequestID, err, attempts)
 				continue
 			}
 		}
@@ -308,40 +314,40 @@ func (client *Client) Do(req Req) (Res, error) {
 		bodyBytes, err := io.ReadAll(httpRes.Body)
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] Cannot decode response body: %+v", err)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %+v", req.RequestID, err)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return Res{}, err
 			} else {
-				log.Printf("[ERROR] Cannot decode response body: %s, retries: %v", err, attempts)
+				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %s, retries: %v", req.RequestID, err, attempts)
 				continue
 			}
 		}
 		res = Res(gjson.ParseBytes(bodyBytes))
 		if req.LogPayload {
-			log.Printf("[DEBUG] HTTP Response: %s", res.Raw)
+			log.Printf("[DEBUG] [ReqID: %s] HTTP Response: %s", req.RequestID, res.Raw)
 		}
 
 		if httpRes.StatusCode >= 200 && httpRes.StatusCode <= 299 {
-			log.Printf("[DEBUG] Exit from Do method")
+			log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 			break
 		} else {
 			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-				log.Printf("[DEBUG] Exit from Do method")
+				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v", req.RequestID, httpRes.StatusCode)
+				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 			} else if httpRes.StatusCode == 429 || (httpRes.StatusCode >= 500 && httpRes.StatusCode <= 599) {
-				log.Printf("[ERROR] HTTP Request failed: StatusCode %v, Retries: %v", httpRes.StatusCode, attempts)
+				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v, Retries: %v", req.RequestID, httpRes.StatusCode, attempts)
 				continue
 			} else if httpRes.StatusCode == 401 && !client.IsCDFMC {
 				// There are bugs in FMC, where the sessions are invalidated out of the blue
 				// In case such a situation is detected, new authentication is forced
-				log.Printf("[DEBUG] Invalid session detected. Forcing reauthentication")
+				log.Printf("[DEBUG] [ReqID: %s] Invalid session detected. Forcing reauthentication", req.RequestID)
 				// Clear AuthToken (which is invalid anyways). This also ensures that Authenticate does full authentication
 				client.AuthToken = ""
 				// Force reauthentication, client.Authenticate() takes care of mutexes, hence not calling Login() directly
 				err := client.Authenticate()
 				if err != nil {
-					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
+					log.Printf("[DEBUG] [ReqID: %s] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", req.RequestID, err.Error())
 					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
 				}
 				req.HttpReq.Header.Set("X-auth-access-token", client.AuthToken)
@@ -355,14 +361,14 @@ func (client *Client) Do(req Req) (Res, error) {
 				}
 			}
 			// In case any previous conditions don't `continue`, return error
-			log.Printf("[ERROR] HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-			log.Printf("[DEBUG] Exit from Do method")
+			log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v", req.RequestID, httpRes.StatusCode)
+			log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 			return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
 		}
 	}
 
 	if res.Get("error.messages.0").Exists() {
-		log.Printf("[ERROR] JSON error: %s", res.Get("error.messages.0").String())
+		log.Printf("[ERROR] [ReqID: %s] JSON error: %s", req.RequestID, res.Get("error.messages.0").String())
 		return res, fmt.Errorf("JSON error: %s", res.Get("error.messages.0").String())
 	}
 	return res, nil
@@ -378,9 +384,9 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 
 	req.HttpReq.Body = io.NopCloser(bytes.NewBuffer(body))
 	if req.LogPayload {
-		log.Printf("[DEBUG] HTTP Request: %s, %s, %s", req.HttpReq.Method, req.HttpReq.URL, string(body))
+		log.Printf("[DEBUG] [ReqID: %s] HTTP Request: %s, %s, %s", req.RequestID, req.HttpReq.Method, req.HttpReq.URL, string(body))
 	} else {
-		log.Printf("[DEBUG] HTTP Request: %s, %s", req.HttpReq.Method, req.HttpReq.URL)
+		log.Printf("[DEBUG] [ReqID: %s] HTTP Request: %s, %s", req.RequestID, req.HttpReq.Method, req.HttpReq.URL)
 	}
 
 	return client.HttpClient.Do(req.HttpReq)
@@ -411,6 +417,9 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	// Otherwise discard previous response and get all pages
 	offset := 0
 	fullOutput := `{"items":[]}`
+
+	// Generate Request ID for tracking all get requests under a single ID
+	mods = append(mods, RequestID(generateRequestID(8)))
 
 	// Lock writing mutex to make sure the pages are not changed during reading
 	client.writingMutex.Lock()
