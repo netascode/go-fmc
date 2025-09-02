@@ -261,16 +261,17 @@ func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*R
 //	req := client.NewReq("GET", "/api/fmc_config/v1/domain/{DOMAIN_UUID}/object/networks", nil)
 //	res, _ := client.Do(req)
 func (client *Client) Do(req Req) (Res, error) {
-	err := client.Authenticate()
+	err := client.Authenticate("")
 	if err != nil {
 		return Res{}, err
 	}
 
 	// add token
+	authToken := client.AuthToken()
 	if client.IsCDFMC {
 		req.HttpReq.Header.Add("Authorization", "Bearer "+client.Pwd)
 	} else {
-		req.HttpReq.Header.Add("X-auth-access-token", client.AuthToken())
+		req.HttpReq.Header.Add("X-auth-access-token", authToken)
 	}
 	req.HttpReq.Header.Add("Content-Type", "application/json")
 	req.HttpReq.Header.Add("Accept", "application/json")
@@ -296,8 +297,9 @@ func (client *Client) Do(req Req) (Res, error) {
 			}
 		}
 
-		defer httpRes.Body.Close()
 		bodyBytes, err := io.ReadAll(httpRes.Body)
+		httpRes.Body.Close()
+
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
 				log.Printf("[ERROR] Cannot decode response body: %+v", err)
@@ -308,7 +310,7 @@ func (client *Client) Do(req Req) (Res, error) {
 				continue
 			}
 		}
-		res = Res(gjson.ParseBytes(bodyBytes))
+		res = gjson.ParseBytes(bodyBytes)
 		if req.LogPayload {
 			log.Printf("[DEBUG] HTTP Response: %s", res.Raw)
 		}
@@ -330,12 +332,13 @@ func (client *Client) Do(req Req) (Res, error) {
 				log.Printf("[DEBUG] Invalid session detected. Forcing reauthentication")
 
 				// Force reauthentication, client.Authenticate() takes care of mutexes, hence not calling Login() directly
-				err := client.Authenticate()
+				err := client.Authenticate(authToken)
 				if err != nil {
 					log.Printf("[DEBUG] HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
 					return res, fmt.Errorf("HTTP Request failed: StatusCode 401: Forced reauthentication failed: %s", err.Error())
 				}
-				req.HttpReq.Header.Set("X-auth-access-token", client.AuthToken())
+				authToken = client.AuthToken()
+				req.HttpReq.Header.Set("X-auth-access-token", authToken)
 				continue
 			} else if desc := res.Get("error.messages.0.description"); desc.Exists() {
 				// FMC may return HTTP response code 400 with advice to retry the operation
@@ -589,7 +592,7 @@ func (client *Client) AuthToken() string {
 }
 
 // Authenticate assures the token is there and valid.
-func (client *Client) Authenticate() error {
+func (client *Client) Authenticate(authToken401 string) error {
 	// cdFMC uses fixed token, no need to do separate authentication
 	if client.IsCDFMC {
 		return nil
@@ -599,12 +602,17 @@ func (client *Client) Authenticate() error {
 
 	client.authTokenMu.Lock()
 	authToken := client.authToken
+	if authToken401 != "" && authToken401 != authToken {
+		// Token has changed since last request, no need to do anything
+		client.authTokenMu.Unlock()
+		return nil
+	}
 
 	client.authenticationMutex.Lock()
 	defer client.authenticationMutex.Unlock()
 
 	if _, ok := client.lastKnownAuthToken[client.authToken]; !ok {
-		client.authTokenMu.RUnlock()
+		client.authTokenMu.Unlock()
 		log.Printf("[INFO] Seems the auth token is already refreshed by another thread, skipping refresh")
 		return nil
 	}
@@ -614,12 +622,14 @@ func (client *Client) Authenticate() error {
 
 	client.authTokenMu.Unlock()
 
-	// Check if we can attempt to refresh the token (there is old token, it's between 25 and 29 minutes since last refresh, and less than 3 refreshes done)
-	if authToken != "" && time.Since(client.LastRefresh) > 1500*time.Second && client.RefreshCount < 3 {
-		err = client.Refresh()
-		// Check if we need to login (no token available or more than 25 minutes since last refresh)
-	} else if authToken == "" || (time.Since(client.LastRefresh) >= 1500*time.Second && client.RefreshCount >= 3) {
+	// First check if we can refresh the token
+	err = client.Refresh()
+	if err != nil {
+		// If refresh fails, do a full login
 		err = client.Login()
+		if err != nil {
+			return err
+		}
 	}
 
 	return err
