@@ -62,8 +62,6 @@ type Client struct {
 	BackoffMaxDelay int
 	// Backoff delay factor
 	BackoffDelayFactor float64
-	// Authentication mutex
-	authenticationMutex *sync.Mutex
 	// LastRefresh is the timestamp of the last authentication token refresh
 	LastRefresh time.Time
 	// RefreshCount is the number to authentication token refreshes with the same refresh token
@@ -78,9 +76,10 @@ type Client struct {
 	FMCVersionParsed *version.Version
 	// Is this cdFMC connection
 	IsCDFMC bool
-
+	// Rate limit requests to FMC
 	RateLimiterBucket *ratelimit.Bucket
-
+	// Authentication mutex
+	authenticationMutex *sync.Mutex
 	// writingMutex protects against concurrent DELETE/POST/PUT requests towards the API.
 	writingMutex *sync.Mutex
 }
@@ -239,7 +238,7 @@ func cdFMC(x bool) func(*Client) {
 
 // NewReq creates a new Req request for this client.
 // Use a "{DOMAIN_UUID}" placeholder in the URI to be replaced with the domain UUID.
-func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Req)) (Req, error) {
+func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*Req)) (Req, error) {
 	httpReq, _ := http.NewRequest(method, client.Url+uri, body)
 	req := Req{
 		HttpReq:    httpReq,
@@ -280,6 +279,11 @@ func (client Client) NewReq(method, uri string, body io.Reader, mods ...func(*Re
 //	req := client.NewReq("GET", "/api/fmc_config/v1/domain/{DOMAIN_UUID}/object/networks", nil)
 //	res, _ := client.Do(req)
 func (client *Client) Do(req Req) (Res, error) {
+	err := client.Authenticate()
+	if err != nil {
+		return Res{}, err
+	}
+
 	// add token
 	if client.IsCDFMC {
 		req.HttpReq.Header.Add("Authorization", "Bearer "+client.Pwd)
@@ -310,8 +314,8 @@ func (client *Client) Do(req Req) (Res, error) {
 			}
 		}
 
-		defer httpRes.Body.Close()
 		bodyBytes, err := io.ReadAll(httpRes.Body)
+		httpRes.Body.Close()
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
 				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %+v", req.RequestID, err)
@@ -322,7 +326,7 @@ func (client *Client) Do(req Req) (Res, error) {
 				continue
 			}
 		}
-		res = Res(gjson.ParseBytes(bodyBytes))
+		res = gjson.ParseBytes(bodyBytes)
 		if req.LogPayload {
 			log.Printf("[DEBUG] [ReqID: %s] HTTP Response: %s", req.RequestID, res.Raw)
 		}
@@ -462,10 +466,6 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 // It does the exact request it is told to do.
 // Results will be the raw data structure as returned by FMC
 func (client *Client) get(path string, mods ...func(*Req)) (Res, error) {
-	err := client.Authenticate()
-	if err != nil {
-		return Res{}, err
-	}
 	req, err := client.NewReq("GET", path, nil, mods...)
 	if err != nil {
 		return Res{}, err
@@ -475,10 +475,6 @@ func (client *Client) get(path string, mods ...func(*Req)) (Res, error) {
 
 // Delete makes a DELETE request.
 func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
-	err := client.Authenticate()
-	if err != nil {
-		return Res{}, err
-	}
 	req, err := client.NewReq("DELETE", path, nil, mods...)
 	if err != nil {
 		return Res{}, err
@@ -489,10 +485,6 @@ func (client *Client) Delete(path string, mods ...func(*Req)) (Res, error) {
 // Post makes a POST request and returns a GJSON result.
 // Hint: Use the Body struct to easily create POST body data.
 func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
-	err := client.Authenticate()
-	if err != nil {
-		return Res{}, err
-	}
 	req, err := client.NewReq("POST", path, strings.NewReader(data), mods...)
 	if err != nil {
 		return Res{}, err
@@ -503,10 +495,6 @@ func (client *Client) Post(path, data string, mods ...func(*Req)) (Res, error) {
 // Put makes a PUT request and returns a GJSON result.
 // Hint: Use the Body struct to easily create PUT body data.
 func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
-	err := client.Authenticate()
-	if err != nil {
-		return Res{}, err
-	}
 	req, err := client.NewReq("PUT", path, strings.NewReader(data), mods...)
 	if err != nil {
 		return Res{}, err
@@ -525,8 +513,8 @@ func (client *Client) Login() error {
 		if err != nil {
 			return err
 		}
-		defer httpRes.Body.Close()
 		bodyBytes, _ := io.ReadAll(httpRes.Body)
+		httpRes.Body.Close()
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
@@ -573,8 +561,8 @@ func (client *Client) Refresh() error {
 		if err != nil {
 			return err
 		}
-		defer httpRes.Body.Close()
 		bodyBytes, _ := io.ReadAll(httpRes.Body)
+		httpRes.Body.Close()
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
