@@ -65,8 +65,6 @@ type Client struct {
 	BackoffMaxDelay int
 	// Backoff delay factor
 	BackoffDelayFactor float64
-	// Authentication mutex
-	authenticationMutex *sync.Mutex
 	// LastRefresh is the timestamp of the last authentication token refresh
 	LastRefresh time.Time
 	// RefreshCount is the number to authentication token refreshes with the same refresh token
@@ -81,9 +79,10 @@ type Client struct {
 	FMCVersionParsed *version.Version
 	// Is this cdFMC connection
 	IsCDFMC bool
-
+	// Rate limit requests to FMC
 	RateLimiterBucket *ratelimit.Bucket
-
+	// Authentication mutex
+	authenticationMutex *sync.Mutex
 	// writingMutex protects against concurrent DELETE/POST/PUT requests towards the API.
 	writingMutex *sync.Mutex
 }
@@ -287,6 +286,7 @@ func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*R
 //	res, _ := client.Do(req)
 func (client *Client) Do(req Req) (Res, error) {
 	err := client.Authenticate("")
+
 	if err != nil {
 		return Res{}, err
 	}
@@ -521,8 +521,8 @@ func (client *Client) Login() error {
 		if err != nil {
 			return err
 		}
-		defer httpRes.Body.Close()
 		bodyBytes, _ := io.ReadAll(httpRes.Body)
+		httpRes.Body.Close()
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)

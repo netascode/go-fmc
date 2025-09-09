@@ -1,6 +1,6 @@
 module github.com/netascode/go-fmc
 
-go 1.23.6
+go 1.24.6
 
 require (
 	github.com/hashicorp/go-version v1.7.0
