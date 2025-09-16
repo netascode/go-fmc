@@ -91,11 +91,11 @@ func TestClientLogin(t *testing.T) {
 
 	// Successful login
 	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
-	assert.NoError(t, client.Login())
+	assert.NoError(t, client.login())
 
 	// Unsuccessful token retrieval
 	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(401)
-	assert.Error(t, client.Login())
+	assert.Error(t, client.login())
 }
 
 // TestClientGetFMCVersion tests the Client::GetFMCVersion method.
