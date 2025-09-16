@@ -317,7 +317,6 @@ func (client *Client) Do(req Req) (Res, error) {
 
 		bodyBytes, err := io.ReadAll(httpRes.Body)
 		httpRes.Body.Close()
-
 		if err != nil {
 			if ok := client.Backoff(attempts); !ok {
 				log.Printf("[ERROR] [ReqID: %s] Cannot decode response body: %+v", req.RequestID, err)
@@ -522,7 +521,6 @@ func (client *Client) login() error {
 		}
 		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		httpRes.Body.Close()
-
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
@@ -541,7 +539,6 @@ func (client *Client) login() error {
 		client.refreshToken = httpRes.Header.Get("X-auth-refresh-token")
 		client.LastRefresh = time.Now()
 		client.RefreshCount = 0
-
 		client.DomainUUID = httpRes.Header.Get("DOMAIN_UUID")
 		client.Domains = make(map[string]string)
 		gjson.Parse(httpRes.Header.Get("DOMAINS")).ForEach(func(k, v gjson.Result) bool {
@@ -562,10 +559,8 @@ func (client *Client) login() error {
 func (client *Client) refresh() error {
 	for attempts := 0; ; attempts++ {
 		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
-
 		req.HttpReq.Header.Add("X-auth-access-token", client.authToken)
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.refreshToken)
-
 		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		client.RateLimiterBucket.Wait(1)
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
@@ -574,7 +569,6 @@ func (client *Client) refresh() error {
 		}
 		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		httpRes.Body.Close()
-
 		if httpRes.StatusCode != 204 {
 			log.Printf("[ERROR] Authentication token refresh failed: StatusCode %v", httpRes.StatusCode)
 			return fmt.Errorf("authentication token refresh failed, status code: %v", httpRes.StatusCode)
@@ -593,7 +587,6 @@ func (client *Client) refresh() error {
 		client.refreshToken = httpRes.Header.Get("X-auth-refresh-token")
 		client.LastRefresh = time.Now()
 		client.RefreshCount = client.RefreshCount + 1
-
 		client.DomainUUID = httpRes.Header.Get("DOMAIN_UUID")
 
 		log.Printf("[DEBUG] Authentication token refresh successful")
@@ -638,10 +631,7 @@ func (client *Client) Authenticate(failedAuthToken string) error {
 	if authToken == "" {
 		// No token, do a full login
 		err = client.login()
-		if err != nil {
-			return err
-		}
-		return nil
+		return err
 	}
 
 	// First check if we can refresh the token
