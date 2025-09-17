@@ -344,14 +344,14 @@ func (client *Client) Do(req Req) (Res, error) {
 				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v, Retries: %v", req.RequestID, httpRes.StatusCode, attempts)
 				continue
 			} else if httpRes.StatusCode == 401 {
+				// When request fails with 401, this indicates invalid authentication tokens
+				// For cdFMC, we just retry the request as this may be glitch in cdFMC
+				// For FMC, we try to reauthenticate and retry the request
 				if client.IsCDFMC {
 					log.Printf("[DEBUG] [ReqID: %s] Invalid session detected. Retrying...", req.RequestID)
 					continue
 				}
-				// There are bugs in FMC, where the sessions are invalidated out of the blue
-				// In case such a situation is detected, new authentication is forced
 				log.Printf("[DEBUG] [ReqID: %s] Invalid session detected. Reauthenticating...", req.RequestID)
-				// Force reauthentication, client.Authenticate() takes care of mutexes, hence not calling Login() directly
 				err := client.Authenticate(authToken)
 				if err != nil {
 					log.Printf("[DEBUG] [ReqID: %s] HTTP Request failed: StatusCode 401: Reauthentication failed with StatusCode (%d): %s", req.RequestID, httpRes.StatusCode, err.Error())
@@ -603,39 +603,37 @@ func (client *Client) AuthToken() string {
 }
 
 // Authenticate assures the token is there and valid.
-// Depending on context, it will try to login or refresh authentication token.
-// failedAuthToken is the token used in the request, that was rejected by FMC. This helps to
+// It will try to login/refresh the token based on the current state and information from FMC on failures.
+// invalidAuthToken is the token used in the request, that was rejected by FMC. This helps to
 // determine, if failed token needs refreshing or has already been refreshed by other thread.
-func (client *Client) Authenticate(failedAuthToken string) error {
+func (client *Client) Authenticate(invalidAuthToken string) error {
 	// cdFMC uses fixed token to authenticate
 	if client.IsCDFMC {
 		return nil
 	}
 
-	var err error
-
 	client.authenticationMutex.Lock()
 	defer client.authenticationMutex.Unlock()
 
-	authToken := client.authToken
-	if failedAuthToken != "" && failedAuthToken != authToken {
-		// Token has changed since last request, no need to do anything
+	if client.authToken != "" && invalidAuthToken == "" {
+		// authToken is present, no error reported, do nothing
 		return nil
 	}
 
-	if authToken != "" && failedAuthToken == "" {
-		// No error reported, do nothing
+	if invalidAuthToken != "" && invalidAuthToken != client.authToken {
+		// authToken has changed since the last request
+		// we assume some other thread has already refreshed it, do nothing
 		return nil
 	}
 
-	if authToken == "" {
-		// No token, do a full login
-		err = client.login()
-		return err
+	if client.authToken == "" {
+		// No authToken, do a full login
+		return client.login()
 	}
 
-	// First check if we can refresh the token
-	err = client.refresh()
+	// We have the tokens, but FMC rejected them
+	// first check if we can refresh the tokens
+	err := client.refresh()
 	if err != nil {
 		// If refresh fails, do a full login
 		err = client.login()
