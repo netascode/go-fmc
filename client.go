@@ -604,9 +604,9 @@ func (client *Client) AuthToken() string {
 
 // Authenticate assures the token is there and valid.
 // It will try to login/refresh the token based on the current state and information from FMC on failures.
-// invalidAuthToken is the token used in the request, that was rejected by FMC. This helps to
+// currentAuthToken is the token used in the request, that was rejected by FMC. This helps to
 // determine, if failed token needs refreshing or has already been refreshed by other thread.
-func (client *Client) Authenticate(invalidAuthToken string) error {
+func (client *Client) Authenticate(currentAuthToken string) error {
 	// cdFMC uses fixed token to authenticate
 	if client.IsCDFMC {
 		return nil
@@ -615,12 +615,12 @@ func (client *Client) Authenticate(invalidAuthToken string) error {
 	client.authenticationMutex.Lock()
 	defer client.authenticationMutex.Unlock()
 
-	if client.authToken != "" && invalidAuthToken == "" {
+	if client.authToken != "" && currentAuthToken == "" {
 		// authToken is present, no error reported, do nothing
 		return nil
 	}
 
-	if invalidAuthToken != "" && invalidAuthToken != client.authToken {
+	if currentAuthToken != "" && currentAuthToken != client.authToken {
 		// authToken has changed since the last request
 		// we assume some other thread has already refreshed it, do nothing
 		return nil
