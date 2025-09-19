@@ -109,7 +109,7 @@ func TestClientCDFMCGetRetry(t *testing.T) {
 
 	// Create client
 	client, _ := NewClientCDFMC(testURL, "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
-	client.AuthToken = "ABC"
+	client.authToken = "ABC"
 
 	// Request should fail
 	gock.New(testURL).Get("/url_400").Reply(400)

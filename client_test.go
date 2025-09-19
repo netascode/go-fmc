@@ -51,7 +51,7 @@ func testClient770() Client {
 
 func authenticatedTestClient() Client {
 	client := testClient()
-	client.AuthToken = "ABC"
+	client.authToken = "ABC"
 	client.LastRefresh = time.Now()
 	client.RefreshCount = 0
 	client.DomainUUID = "ABC123"
@@ -91,11 +91,11 @@ func TestClientLogin(t *testing.T) {
 
 	// Successful login
 	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
-	assert.NoError(t, client.Login())
+	assert.NoError(t, client.login())
 
 	// Unsuccessful token retrieval
 	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(401)
-	assert.Error(t, client.Login())
+	assert.Error(t, client.login())
 }
 
 // TestClientGetFMCVersion tests the Client::GetFMCVersion method.
@@ -183,7 +183,7 @@ func TestClientGetRetry(t *testing.T) {
 
 	// Create client
 	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
-	client.AuthToken = "ABC"
+	client.authToken = "ABC"
 	client.LastRefresh = time.Now()
 
 	// Request should fail
