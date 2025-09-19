@@ -1,8 +1,8 @@
-## 0.2.2 (Unreleased)
+## 0.3.0
 
 - BREAKING CHANGE: `login()` and `refresh()` functions are no logner exported
-- BREAKING CHANGE: `Authenticate()` is now defined as `Authenticate(failedAuthToken string)`
-- Fix: Possible race-conditions and miss-handling of the FMC authentication tokens
+- BREAKING CHANGE: `Authenticate()` is now defined as `Authenticate(currentAuthToken string)`
+- Fix: Mishandling of the FMC authentication token could lead to failures and redundant authentications
 - Enh: Introduced ReqID to correlate events in the logs
 - Enh: FMC 7.4.1, 7.6.0 and later releases have rate-limit increased to 300 req/min
 
