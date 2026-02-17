@@ -122,8 +122,6 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		mod(&client)
 	}
 
-	log.Printf("[DEBUG] Super version 2")
-
 	err := client.GetFMCVersion()
 	if err != nil {
 		log.Printf("[ERROR] Failed to retrieve FMC version: %s", err.Error())
