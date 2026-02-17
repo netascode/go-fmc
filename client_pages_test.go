@@ -12,9 +12,8 @@ func TestClientGet_PagesBasic(t *testing.T) {
 	defer gock.Off()
 	client := authenticatedTestClient()
 
-	// For pagination tests to be readable, we use dummy page size of 3 instead of 500.
-	// Since we are changing a package-level var, this test cannot be run on t.Parallel().
-	maxItems = 3
+	// For pagination tests to be readable, we use dummy page size of 3 instead of 1000.
+	client.MaxItems = 3
 
 	// First request will be without offset to detect if output is paginated.
 	gock.New(testURL).Get("/url").
@@ -41,9 +40,8 @@ func TestClientGet_LastPageEmpty(t *testing.T) {
 	defer gock.Off()
 	client := authenticatedTestClient()
 
-	// For pagination tests to be readable, we use dummy page size of 3 instead of 500.
-	// Since we are changing a package-level var, this test cannot be run on t.Parallel().
-	maxItems = 3
+	// For pagination tests to be readable, we use dummy page size of 3 instead of 1000.
+	client.MaxItems = 3
 
 	// First request will be without offset to detect if output is paginated.
 	gock.New(testURL).Get("/url").

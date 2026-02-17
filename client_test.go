@@ -80,8 +80,8 @@ func TestNewClient(t *testing.T) {
 	gock.InterceptClient(httpClient)
 
 	// Create client
-	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), RequestTimeout(120))
-	assert.Equal(t, client.HttpClient.Timeout, 120*time.Second)
+	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), RequestTimeout(120*time.Second))
+	assert.Equal(t, 120*time.Second, client.HttpClient.Timeout)
 }
 
 // TestClientLogin tests the Client::Login method.
