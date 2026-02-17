@@ -3,7 +3,7 @@ module github.com/netascode/go-fmc
 go 1.24.6
 
 require (
-	github.com/hashicorp/go-version v1.7.0
+	github.com/hashicorp/go-version v1.8.0
 	github.com/juju/ratelimit v1.0.2
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.18.0
