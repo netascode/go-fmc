@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -137,7 +138,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 
 	log.Printf("[INFO] FMC Version: %s, FMC Version Parsed: %s", client.FMCVersion, client.FMCVersionParsed.String())
 
-	// FMC 7.4.1, 6.6.0 and later have increased rate limits
+	// FMC 7.4.1, 7.6.0 and later have increased rate limits
 	if client.FMCVersionParsed.GreaterThanOrEqual(version.Must(version.NewVersion("7.4.1"))) {
 		log.Printf("[DEBUG] Increasing rate limit to 5 req/s (300 req/min)")
 		client.RateLimiterBucket = ratelimit.NewBucketWithRate(5, 1) // 5 req/s = 300 req/min
@@ -267,7 +268,8 @@ func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*R
 		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.DomainUUID)
 	} else {
 		// Check if selected domains exists on FMC
-		if _, ok := client.Domains[req.DomainName]; !ok {
+		uuid, ok := client.Domains[req.DomainName]
+		if !ok {
 			availableDomains := make([]string, len(client.Domains))
 			i := 0
 			for k := range client.Domains {
@@ -277,7 +279,7 @@ func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*R
 			log.Printf("[ERROR] [ReqID: %s] Requested domain not found: requested domain: %s, available domains: %s", req.RequestID, req.DomainName, availableDomains)
 			return Req{}, fmt.Errorf("requested domain not found: requested domain: %s, available domains: %s", req.DomainName, availableDomains)
 		}
-		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", client.Domains[req.DomainName])
+		req.HttpReq.URL.Path = strings.ReplaceAll(req.HttpReq.URL.Path, "{DOMAIN_UUID}", uuid)
 	}
 	return req, nil
 }
@@ -374,7 +376,7 @@ func (client *Client) Do(req Req) (Res, error) {
 				// FMC may return HTTP response code 400 with advice to retry the operation
 				if strings.Contains(strings.ToLower(desc.String()), "please try again") ||
 					strings.Contains(strings.ToLower(desc.String()), "retry the operation after sometime") {
-					log.Printf("[ERROR] HTTP Request failed with advice to try again. Retrying.")
+					log.Printf("[ERROR] [ReqID: %s] HTTP Request failed with advice to try again. Retrying.", req.RequestID)
 					continue
 				}
 			}
@@ -385,9 +387,9 @@ func (client *Client) Do(req Req) (Res, error) {
 		}
 	}
 
-	if res.Get("error.messages.0").Exists() {
-		log.Printf("[ERROR] [ReqID: %s] JSON error: %s", req.RequestID, res.Get("error.messages.0").String())
-		return res, fmt.Errorf("JSON error: %s", res.Get("error.messages.0").String())
+	if errMsg := res.Get("error.messages.0"); errMsg.Exists() {
+		log.Printf("[ERROR] [ReqID: %s] JSON error: %s", req.RequestID, errMsg.String())
+		return res, fmt.Errorf("JSON error: %s", errMsg.String())
 	}
 	return res, nil
 }
@@ -400,7 +402,7 @@ func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 		defer client.writingMutex.Unlock()
 	}
 
-	req.HttpReq.Body = io.NopCloser(bytes.NewBuffer(body))
+	req.HttpReq.Body = io.NopCloser(bytes.NewReader(body))
 	if req.LogPayload {
 		log.Printf("[DEBUG] [ReqID: %s] HTTP Request: %s, %s, %s", req.RequestID, req.HttpReq.Method, req.HttpReq.URL, string(body))
 	} else {
@@ -438,10 +440,11 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	// Lock writing mutex to make sure the pages are not changed during reading
 	client.writingMutex.Lock()
 
-	// Collect raw item strings into a slice
-	var itemChunks []string
+	// Build the merged response in a single pass
+	var sb strings.Builder
+	sb.WriteString(`{"items":[`)
+	first := true
 	offset := 0
-	err = nil
 	for {
 		// Get URL path with offset and limit set
 		urlPath := pathWithOffset(path, offset, client.MaxItems)
@@ -456,16 +459,16 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 		// Check if there are any items in the response
 		items := raw.Get("items")
 		if !items.Exists() {
-			client.writingMutex.Unlock()
-			// Return whatever we have collected so far, with an error
-			err = fmt.Errorf("pagination error: 'items' field not found in response for path: %s", urlPath)
 			break
 		}
 
-		// Strip surrounding square brackets and collect non-empty chunks
-		rawItems := items.Raw
-		if chunk := rawItems[1 : len(rawItems)-1]; chunk != "" {
-			itemChunks = append(itemChunks, chunk)
+		// Strip surrounding square brackets and append items directly
+		if chunk := items.Raw[1 : len(items.Raw)-1]; chunk != "" {
+			if !first {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(chunk)
+			first = false
 		}
 
 		// If there are no more pages, stop reading
@@ -478,9 +481,8 @@ func (client *Client) Get(path string, mods ...func(*Req)) (Res, error) {
 	}
 	client.writingMutex.Unlock()
 
-	// Merge all collected items into a single response
-	fullOutput := `{"items":[` + strings.Join(itemChunks, ",") + `]}`
-	return gjson.Parse(fullOutput), err
+	sb.WriteString(`]}`)
+	return gjson.Parse(sb.String()), nil
 }
 
 // get makes a GET request and returns a GJSON result.
@@ -715,7 +717,7 @@ func pathWithOffset(path string, offset, limit int) string {
 		sep = "&"
 	}
 
-	return fmt.Sprintf("%s%soffset=%d&limit=%d", path, sep, offset, limit)
+	return path + sep + "offset=" + strconv.Itoa(offset) + "&limit=" + strconv.Itoa(limit)
 }
 
 // hasQueryParam checks if a URL path contains a specific query parameter name.
