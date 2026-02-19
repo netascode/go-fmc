@@ -40,9 +40,9 @@ func TestNewClientCDFMC(t *testing.T) {
 	gock.InterceptClient(httpClient)
 
 	// Create client
-	client, ok := NewClientCDFMC(testURL, "usr", CustomHttpClient(httpClient), RequestTimeout(120))
+	client, ok := NewClientCDFMC(testURL, "usr", CustomHttpClient(httpClient), RequestTimeout(120*time.Second))
 	assert.NoError(t, ok)
-	assert.Equal(t, client.HttpClient.Timeout, 120*time.Second)
+	assert.Equal(t, 120*time.Second, client.HttpClient.Timeout)
 }
 
 // TestClientGetFMCVersion tests the Client::GetFMCVersion method.

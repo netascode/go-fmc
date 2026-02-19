@@ -1,3 +1,8 @@
+## Unreleased
+
+- Fix: RequestTimeout() wrongly sets timeout value
+- Other minor fixes
+
 ## 0.3.0
 
 - BREAKING CHANGE: `login()` and `refresh()` functions are no logner exported
