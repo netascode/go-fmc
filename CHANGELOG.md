@@ -1,4 +1,4 @@
-## Unreleased
+## 0.3.1
 
 - Fix: RequestTimeout() wrongly sets timeout value
 - Other minor fixes
