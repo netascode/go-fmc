@@ -1,13 +1,13 @@
 module github.com/netascode/go-fmc
 
-go 1.25
+go 1.25.0
 
 require (
-	github.com/hashicorp/go-version v1.8.0
-	github.com/juju/ratelimit v1.0.2
+	github.com/hashicorp/go-version v1.9.0
 	github.com/stretchr/testify v1.11.1
-	github.com/tidwall/gjson v1.18.0
+	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/sjson v1.2.5
+	golang.org/x/time v0.15.0
 	gopkg.in/h2non/gock.v1 v1.1.2
 )
 

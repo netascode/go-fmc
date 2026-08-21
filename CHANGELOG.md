@@ -1,3 +1,7 @@
+## 0.3.2 (Unreleased)
+
+- Replace `juju/ratelimit` with `golang.org/x/time/rate`
+
 ## 0.3.1
 
 - Fix: RequestTimeout() wrongly sets timeout value

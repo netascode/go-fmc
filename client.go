@@ -8,7 +8,7 @@ import (
 	"io"
 	"log"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"net/http/cookiejar"
 	"strconv"
@@ -19,7 +19,7 @@ import (
 	"github.com/hashicorp/go-version"
 	"github.com/tidwall/gjson"
 
-	"github.com/juju/ratelimit"
+	"golang.org/x/time/rate"
 )
 
 const DefaultMaxRetries int = 3
@@ -76,8 +76,13 @@ type Client struct {
 	FMCVersionParsed *version.Version
 	// Is this cdFMC connection
 	IsCDFMC bool
-	// Rate limit requests to FMC
-	RateLimiterBucket *ratelimit.Bucket
+	// Rate limit requests to FMC.
+	//
+	// FMC enforces:
+	// FMC < 7.4.1  - 120 req/min
+	// FMC >= 7.4.1 - 300 req/min
+	// Keeping safety margin of ~2%
+	RateLimiterBucket *rate.Limiter
 	// Authentication mutex
 	authenticationMutex *sync.RWMutex
 	// Maximum number of items retrieved in a single GET request
@@ -114,7 +119,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		BackoffMaxDelay:     DefaultBackoffMaxDelay,
 		BackoffDelayFactor:  DefaultBackoffDelayFactor,
 		MaxItems:            DefaultMaxItems,
-		RateLimiterBucket:   ratelimit.NewBucketWithRate(1.97, 1), // 1.97 req/s ~= 118 req/min (+/- 1% from 120 req/min that FMC allows)
+		RateLimiterBucket:   rate.NewLimiter(1.97, 1), // 1.97 req/s = 118.2 req/min
 		authenticationMutex: &sync.RWMutex{},
 		writingMutex:        &sync.Mutex{},
 	}
@@ -140,8 +145,8 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 
 	// FMC 7.4.1, 7.6.0 and later have increased rate limits
 	if client.FMCVersionParsed.GreaterThanOrEqual(version.Must(version.NewVersion("7.4.1"))) {
-		log.Printf("[DEBUG] Increasing rate limit to 5 req/s (300 req/min)")
-		client.RateLimiterBucket = ratelimit.NewBucketWithRate(5, 1) // 5 req/s = 300 req/min
+		log.Printf("[DEBUG] Increasing rate limit to 4.9 req/s (294 req/min)")
+		client.RateLimiterBucket = rate.NewLimiter(4.9, 1) // 4.9 req/s = 294 req/min
 	}
 
 	return client, nil
@@ -249,7 +254,11 @@ func cdFMC(x bool) func(*Client) {
 // NewReq creates a new Req request for this client.
 // Use a "{DOMAIN_UUID}" placeholder in the URI to be replaced with the domain UUID.
 func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*Req)) (Req, error) {
-	httpReq, _ := http.NewRequest(method, client.Url+uri, body)
+	httpReq, err := http.NewRequest(method, client.Url+uri, body)
+	if err != nil {
+		log.Printf("[ERROR] Failed to create HTTP request: %s %s: %s", method, client.Url+uri, err.Error())
+		return Req{}, fmt.Errorf("failed to create HTTP request: %s %s: %w", method, client.Url+uri, err)
+	}
 	req := Req{
 		HttpReq:    httpReq,
 		LogPayload: true,
@@ -395,7 +404,10 @@ func (client *Client) Do(req Req) (Res, error) {
 }
 
 func (client *Client) do(req Req, body []byte) (*http.Response, error) {
-	client.RateLimiterBucket.Wait(1) // Block until rate limit token available
+	// Block until rate limit token available
+	if err := client.RateLimiterBucket.Wait(req.HttpReq.Context()); err != nil {
+		return nil, err
+	}
 
 	if req.HttpReq.Method != "GET" {
 		client.writingMutex.Lock()
@@ -529,10 +541,15 @@ func (client *Client) Put(path, data string, mods ...func(*Req)) (Res, error) {
 // This function is not thread safe, use Authenticate() instead.
 func (client *Client) login() error {
 	for attempts := 0; ; attempts++ {
-		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/generatetoken", strings.NewReader(""), NoLogPayload)
+		req, err := client.NewReq("POST", "/api/fmc_platform/v1/auth/generatetoken", strings.NewReader(""), NoLogPayload)
+		if err != nil {
+			return err
+		}
 		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		req.HttpReq.SetBasicAuth(client.Usr, client.Pwd)
-		client.RateLimiterBucket.Wait(1)
+		if err := client.RateLimiterBucket.Wait(req.HttpReq.Context()); err != nil {
+			return err
+		}
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
 			return err
@@ -576,11 +593,16 @@ func (client *Client) login() error {
 // This function is not thread safe, use Authenticate() instead.
 func (client *Client) refresh() error {
 	for attempts := 0; ; attempts++ {
-		req, _ := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
+		req, err := client.NewReq("POST", "/api/fmc_platform/v1/auth/refreshtoken", strings.NewReader(""), NoLogPayload)
+		if err != nil {
+			return err
+		}
 		req.HttpReq.Header.Add("X-auth-access-token", client.authToken)
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.refreshToken)
 		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
-		client.RateLimiterBucket.Wait(1)
+		if err := client.RateLimiterBucket.Wait(req.HttpReq.Context()); err != nil {
+			return err
+		}
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
 			return err

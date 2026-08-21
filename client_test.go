@@ -115,11 +115,11 @@ func TestClientRateLimitValue(t *testing.T) {
 
 	// Check rate limit for version 7.2.4
 	client := testClient()
-	assert.InDelta(t, 1.97, client.RateLimiterBucket.Rate(), 0.01)
+	assert.InDelta(t, 1.97, float64(client.RateLimiterBucket.Limit()), 0.01)
 
 	// Check rate limit for version 7.7.0
 	client = testClient770()
-	assert.InDelta(t, 5.00, client.RateLimiterBucket.Rate(), 0.01)
+	assert.InDelta(t, 4.90, float64(client.RateLimiterBucket.Limit()), 0.01)
 }
 
 // TestClientGet tests the Client::Get method.
