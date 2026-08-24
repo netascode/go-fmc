@@ -37,7 +37,7 @@ package main
 import "github.com/netascode/go-fmc"
 
 func main() {
-    client, _ := fmc.NewClientCDFMC("https://<YOUR_TENNANT_URL>.cdo.cisco.com", "apiToken")
+    client, _ := fmc.NewClientCDFMC("https://<YOUR_TENANT_URL>.cdo.cisco.com", "apiToken")
 
     res, _ := client.Get("/api/fmc_config/v1/domain/{DOMAIN_UUID}/object/networks")
     println(res.Get("items.0.name").String())
@@ -54,7 +54,7 @@ any-ipv4
 
 #### Result manipulation
 
-`fmc.Result` uses GJSON to simplify handling JSON results. See the [GJSON](https://github.com/tidwall/gjson) documentation for more detail.
+`fmc.Res` uses GJSON to simplify handling JSON results. See the [GJSON](https://github.com/tidwall/gjson) documentation for more detail.
 
 ```go
 res, _ := client.Get("/api/fmc_config/v1/domain/{DOMAIN_UUID}/object/networks")

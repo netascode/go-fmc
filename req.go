@@ -46,7 +46,7 @@ func (body Body) Res() Res {
 
 // Req wraps http.Request for API requests.
 type Req struct {
-	// HttpReq is the *http.Request obejct.
+	// HttpReq is the *http.Request object.
 	HttpReq *http.Request
 	// LogPayload indicates whether logging of payloads should be enabled.
 	LogPayload bool

@@ -19,7 +19,7 @@ func testClient() Client {
 	defer gock.Off()
 
 	// Client will try to get FMC version on creation, so we need to mock those
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
 	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
 
 	// Prepare client and intercept
@@ -36,7 +36,7 @@ func testClient770() Client {
 	defer gock.Off()
 
 	// Client will try to get FMC version on creation, so we need to mock those
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
 	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.7.0 (build 123)"}]}`)
 
 	// Prepare client and intercept
@@ -72,7 +72,7 @@ func TestNewClient(t *testing.T) {
 	defer gock.Off()
 
 	// Client will try to get FMC version on creation, so we need to mock those
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
 	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
 
 	// Prepare client and intercept
@@ -90,12 +90,174 @@ func TestClientLogin(t *testing.T) {
 	client := testClient()
 
 	// Successful login
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
 	assert.NoError(t, client.login())
 
 	// Unsuccessful token retrieval
 	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(401)
 	assert.Error(t, client.login())
+
+	// A failed login must not leave a stale token behind
+	assert.Empty(t, client.authToken)
+
+	// Success reported by FMC, but no token returned
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	assert.Error(t, client.login())
+	assert.Empty(t, client.authToken)
+}
+
+// TestClientLoginRetry tests the retry behaviour of the Client::login method.
+func TestClientLoginRetry(t *testing.T) {
+	defer gock.Off()
+
+	// Client will try to get FMC version on creation, so we need to mock those
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
+
+	// Prepare client and intercept
+	httpClient := &http.Client{}
+	gock.InterceptClient(httpClient)
+
+	// Create client
+	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
+
+	// Server-side error, retried and eventually successful
+	gock.Flush()
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(500)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).
+		SetHeader("X-auth-access-token", "ABC").
+		SetHeader("X-auth-refresh-token", "DEF").
+		SetHeader("DOMAIN_UUID", "ABC123").
+		SetHeader("DOMAINS", `[{"name":"Global","uuid":"ABC123"}]`)
+	assert.NoError(t, client.login())
+	assert.True(t, gock.IsDone())
+	assert.Equal(t, "ABC", client.authToken)
+	assert.Equal(t, "DEF", client.refreshToken)
+	assert.Equal(t, "ABC123", client.DomainUUID)
+	assert.Equal(t, map[string]string{"Global": "ABC123"}, client.Domains)
+
+	// Rate limiting, retried and eventually successful
+	gock.Flush()
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(429)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
+	assert.NoError(t, client.login())
+	assert.True(t, gock.IsDone())
+
+	// Server-side error, all attempts fail as re-try counter is exceeded
+	gock.Flush()
+	for i := 0; i < 4; i++ {
+		gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(503)
+	}
+	assert.Error(t, client.login())
+	assert.True(t, gock.IsDone())
+
+	// Invalid credentials are terminal, the second mock must remain unconsumed
+	gock.Flush()
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(401)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
+	assert.Error(t, client.login())
+	assert.False(t, gock.IsDone())
+
+	// Locked account / insufficient privileges is terminal, the second mock must remain unconsumed
+	gock.Flush()
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(403)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
+	assert.Error(t, client.login())
+	assert.False(t, gock.IsDone())
+}
+
+// TestClientRefresh tests the Client::refresh method.
+func TestClientRefresh(t *testing.T) {
+	defer gock.Off()
+	client := authenticatedTestClient()
+
+	// Successful refresh
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(204).
+		SetHeader("X-auth-access-token", "NEW").
+		SetHeader("X-auth-refresh-token", "NEWREF")
+	assert.NoError(t, client.refresh())
+	assert.Equal(t, "NEW", client.authToken)
+	assert.Equal(t, "NEWREF", client.refreshToken)
+	assert.Equal(t, 1, client.RefreshCount)
+	// FMC returned no domain UUID, the known one must be kept
+	assert.Equal(t, "ABC123", client.DomainUUID)
+
+	// Expired refresh token. Tokens must be left untouched,
+	// so that Authenticate can fall back to a full login.
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(401)
+	assert.Error(t, client.refresh())
+	assert.Equal(t, "NEW", client.authToken)
+	assert.Equal(t, "NEWREF", client.refreshToken)
+
+	// Success reported by FMC, but no token returned
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(204)
+	assert.Error(t, client.refresh())
+	assert.Equal(t, "NEW", client.authToken)
+}
+
+// TestClientRefreshRetry tests the retry behaviour of the Client::refresh method.
+func TestClientRefreshRetry(t *testing.T) {
+	defer gock.Off()
+
+	// Client will try to get FMC version on creation, so we need to mock those
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
+
+	// Prepare client and intercept
+	httpClient := &http.Client{}
+	gock.InterceptClient(httpClient)
+
+	// Create client
+	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
+
+	// Server-side error, retried and eventually successful
+	gock.Flush()
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(500)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(204).SetHeader("X-auth-access-token", "NEW")
+	assert.NoError(t, client.refresh())
+	assert.True(t, gock.IsDone())
+	assert.Equal(t, "NEW", client.authToken)
+
+	// Server-side error, all attempts fail as re-try counter is exceeded
+	gock.Flush()
+	for i := 0; i < 4; i++ {
+		gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(503)
+	}
+	assert.Error(t, client.refresh())
+	assert.True(t, gock.IsDone())
+
+	// Expired token is terminal, the second mock must remain unconsumed
+	gock.Flush()
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(401)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(204).SetHeader("X-auth-access-token", "NEW2")
+	assert.Error(t, client.refresh())
+	assert.False(t, gock.IsDone())
+	assert.Equal(t, "NEW", client.authToken)
+}
+
+// TestClientAuthenticateRefreshLimit tests that Authenticate stops refreshing and
+// does a full login once the refresh token has been used MaxTokenRefreshes times.
+func TestClientAuthenticateRefreshLimit(t *testing.T) {
+	defer gock.Off()
+	client := authenticatedTestClient()
+
+	// Below the limit, the refresh token is used
+	client.RefreshCount = MaxTokenRefreshes - 1
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(204).SetHeader("X-auth-access-token", "REFRESHED")
+	assert.NoError(t, client.Authenticate("ABC"))
+	assert.Equal(t, "REFRESHED", client.authToken)
+	assert.Equal(t, MaxTokenRefreshes, client.RefreshCount)
+	assert.True(t, gock.IsDone())
+
+	// At the limit, refresh must not be attempted at all. The refresh mock must
+	// remain unconsumed and the token must come from a full login.
+	gock.Flush()
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/refreshtoken").Reply(204).SetHeader("X-auth-access-token", "REFRESHED2")
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "LOGGEDIN")
+	assert.NoError(t, client.Authenticate("REFRESHED"))
+	assert.Equal(t, "LOGGEDIN", client.authToken)
+	assert.Equal(t, 0, client.RefreshCount)
+	assert.False(t, gock.IsDone())
 }
 
 // TestClientGetFMCVersion tests the Client::GetFMCVersion method.
@@ -115,11 +277,11 @@ func TestClientRateLimitValue(t *testing.T) {
 
 	// Check rate limit for version 7.2.4
 	client := testClient()
-	assert.InDelta(t, 1.97, float64(client.RateLimiterBucket.Limit()), 0.01)
+	assert.InDelta(t, 1.97, float64(client.RateLimiter.Limit()), 0.01)
 
 	// Check rate limit for version 7.7.0
 	client = testClient770()
-	assert.InDelta(t, 4.90, float64(client.RateLimiterBucket.Limit()), 0.01)
+	assert.InDelta(t, 4.90, float64(client.RateLimiter.Limit()), 0.01)
 }
 
 // TestClientGet tests the Client::Get method.
@@ -174,7 +336,7 @@ func TestClientGetRetry(t *testing.T) {
 	var err error
 
 	// Client will try to get FMC version on creation, so we need to mock those
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204)
+	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
 	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
 
 	// Prepare client and intercept

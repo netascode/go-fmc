@@ -30,6 +30,9 @@ const DefaultBackoffDelayFactor float64 = 3
 // maximum number of items retrieved in a single GET request
 const DefaultMaxItems int = 1000
 
+// maximum number of times a refresh token can be used to refresh the authentication token.
+const MaxTokenRefreshes int = 3
+
 // Client is an HTTP FMC client.
 // Use fmc.NewClient to initiate a client.
 // This will ensure proper cookie handling and processing of modifiers.
@@ -42,16 +45,16 @@ type Client struct {
 	HttpClient *http.Client
 	// Url is the FMC IP or hostname, e.g. https://10.0.0.1:443 (port is optional).
 	Url string
-	// Authentication token is the current authentication token
+	// Current authentication token
 	authToken string
-	// Refresh token is the current authentication token
+	// Current refresh token
 	refreshToken string
 	// UserAgent is the HTTP User-Agent string
 	UserAgent string
 	// Usr is the FMC username. Not used for cdFMC.
 	Usr string
-	// Pwd is the FMC password or cdFMC API token
-	Pwd string
+	// pwd is the FMC password or cdFMC API token
+	pwd string
 	// Insecure determines if insecure https connections are allowed.
 	Insecure bool
 	// Maximum number of retries
@@ -64,7 +67,7 @@ type Client struct {
 	BackoffDelayFactor float64
 	// LastRefresh is the timestamp of the last authentication token refresh
 	LastRefresh time.Time
-	// RefreshCount is the number to authentication token refreshes with the same refresh token
+	// number of authentication token refreshes done with the same refresh token.
 	RefreshCount int
 	// DomainUUID is the UUID of the user login domain.
 	DomainUUID string
@@ -82,7 +85,7 @@ type Client struct {
 	// FMC < 7.4.1  - 120 req/min
 	// FMC >= 7.4.1 - 300 req/min
 	// Keeping safety margin of ~2%
-	RateLimiterBucket *rate.Limiter
+	RateLimiter *rate.Limiter
 	// Authentication mutex
 	authenticationMutex *sync.RWMutex
 	// Maximum number of items retrieved in a single GET request
@@ -94,7 +97,7 @@ type Client struct {
 // NewClient creates a new FMC HTTP client.
 // Pass modifiers in to modify the behavior of the client, e.g.
 //
-//	client, _ := NewClient("fmc1.cisco.com", "user", "password", RequestTimeout(120))
+//	client, _ := NewClient("https://fmc1.cisco.com", "user", "password", RequestTimeout(120*time.Second))
 func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -113,13 +116,13 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 		Url:                 url,
 		UserAgent:           "go-fmc netascode",
 		Usr:                 usr,
-		Pwd:                 pwd,
+		pwd:                 pwd,
 		MaxRetries:          DefaultMaxRetries,
 		BackoffMinDelay:     DefaultBackoffMinDelay,
 		BackoffMaxDelay:     DefaultBackoffMaxDelay,
 		BackoffDelayFactor:  DefaultBackoffDelayFactor,
 		MaxItems:            DefaultMaxItems,
-		RateLimiterBucket:   rate.NewLimiter(1.97, 1), // 1.97 req/s = 118.2 req/min
+		RateLimiter:         rate.NewLimiter(1.97, 1), // 1.97 req/s = 118.2 req/min
 		authenticationMutex: &sync.RWMutex{},
 		writingMutex:        &sync.Mutex{},
 	}
@@ -146,7 +149,7 @@ func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
 	// FMC 7.4.1, 7.6.0 and later have increased rate limits
 	if client.FMCVersionParsed.GreaterThanOrEqual(version.Must(version.NewVersion("7.4.1"))) {
 		log.Printf("[DEBUG] Increasing rate limit to 4.9 req/s (294 req/min)")
-		client.RateLimiterBucket = rate.NewLimiter(4.9, 1) // 4.9 req/s = 294 req/min
+		client.RateLimiter = rate.NewLimiter(4.9, 1) // 4.9 req/s = 294 req/min
 	}
 
 	return client, nil
@@ -294,10 +297,10 @@ func (client *Client) NewReq(method, uri string, body io.Reader, mods ...func(*R
 }
 
 // Do makes a request.
-// Requests for Do are built ouside of the client, e.g.
+// Requests for Do are built outside of the client, e.g.
 //
-//	req := client.NewReq("GET", "/api/fmc_config/v1/domain/{DOMAIN_UUID}/object/networks", nil)
-//	res, _ := client.Do(req)
+//	req, err := client.NewReq("GET", "/api/fmc_config/v1/domain/{DOMAIN_UUID}/object/networks", nil)
+//	res, err := client.Do(req)
 func (client *Client) Do(req Req) (Res, error) {
 	err := client.Authenticate("")
 	if err != nil {
@@ -307,7 +310,7 @@ func (client *Client) Do(req Req) (Res, error) {
 	// Save current auth token. In case of 401, we can check if the token has changed in the meantime
 	authToken := client.AuthToken()
 	if client.IsCDFMC {
-		req.HttpReq.Header.Add("Authorization", "Bearer "+client.Pwd)
+		req.HttpReq.Header.Add("Authorization", "Bearer "+client.pwd)
 	} else {
 		req.HttpReq.Header.Add("X-auth-access-token", authToken)
 	}
@@ -405,7 +408,7 @@ func (client *Client) Do(req Req) (Res, error) {
 
 func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 	// Block until rate limit token available
-	if err := client.RateLimiterBucket.Wait(req.HttpReq.Context()); err != nil {
+	if err := client.RateLimiter.Wait(req.HttpReq.Context()); err != nil {
 		return nil, err
 	}
 
@@ -546,46 +549,64 @@ func (client *Client) login() error {
 			return err
 		}
 		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
-		req.HttpReq.SetBasicAuth(client.Usr, client.Pwd)
-		if err := client.RateLimiterBucket.Wait(req.HttpReq.Context()); err != nil {
+		req.HttpReq.SetBasicAuth(client.Usr, client.pwd)
+		if err := client.RateLimiter.Wait(req.HttpReq.Context()); err != nil {
 			return err
 		}
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
-			return err
+			if ok := client.Backoff(attempts); !ok {
+				log.Printf("[ERROR] Authentication failed after %v retries: HTTP connection error occurred: %+v", attempts, err)
+				return fmt.Errorf("authentication failed after %v retries: %w", attempts, err)
+			}
+			log.Printf("[ERROR] Authentication failed: HTTP connection failed: %s, retries: %v", err, attempts)
+			continue
 		}
 		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		httpRes.Body.Close()
-		if httpRes.StatusCode != 204 {
-			log.Printf("[ERROR] Authentication failed: StatusCode %v", httpRes.StatusCode)
-			return fmt.Errorf("authentication failed, status code: %v", httpRes.StatusCode)
-		}
-		if len(bodyBytes) > 0 {
-			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] Authentication failed: Invalid credentials")
-				return fmt.Errorf("authentication failed, invalid credentials")
-			} else {
-				log.Printf("[ERROR] Authentication failed, retries: %v, response body: %s", attempts, string(bodyBytes))
-				continue
+
+		if httpRes.StatusCode == 204 {
+			// FMC signals success with 204 and carries the tokens in the response headers.
+			// Check if the token exists (eg. wasn't dropped by proxy) before overwritting
+			authToken := httpRes.Header.Get("X-auth-access-token")
+			if authToken == "" {
+				log.Printf("[ERROR] Authentication failed: no access token returned by FMC")
+				return fmt.Errorf("authentication failed, no access token returned by FMC")
 			}
+
+			client.authToken = authToken
+			client.refreshToken = httpRes.Header.Get("X-auth-refresh-token")
+			client.LastRefresh = time.Now()
+			client.RefreshCount = 0
+			client.DomainUUID = httpRes.Header.Get("DOMAIN_UUID")
+			client.Domains = make(map[string]string)
+			gjson.Parse(httpRes.Header.Get("DOMAINS")).ForEach(func(_, v gjson.Result) bool {
+				domainName := v.Get("name").String()
+				domainUuid := v.Get("uuid").String()
+				client.Domains[domainName] = domainUuid
+				log.Printf("[DEBUG] Found domain: %s, UUID: %s", domainName, domainUuid)
+				return true // keep iterating
+			})
+
+			log.Printf("[DEBUG] Authentication successful")
+			return nil
 		}
 
-		client.authToken = httpRes.Header.Get("X-auth-access-token")
-		client.refreshToken = httpRes.Header.Get("X-auth-refresh-token")
-		client.LastRefresh = time.Now()
-		client.RefreshCount = 0
-		client.DomainUUID = httpRes.Header.Get("DOMAIN_UUID")
-		client.Domains = make(map[string]string)
-		gjson.Parse(httpRes.Header.Get("DOMAINS")).ForEach(func(k, v gjson.Result) bool {
-			domainName := v.Get("name").String()
-			domainUuid := v.Get("uuid").String()
-			client.Domains[domainName] = domainUuid
-			log.Printf("[DEBUG] Found domain: %s, UUID: %s", domainName, domainUuid)
-			return true // keep iterating
-		})
+		// Only rate limiting (429) and server-side errors (5xx) are worth retrying.
+		if httpRes.StatusCode != 429 && (httpRes.StatusCode < 500 || httpRes.StatusCode > 599) {
+			client.authToken = ""
+			log.Printf("[ERROR] Authentication failed: StatusCode %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+			return fmt.Errorf("authentication failed, status code: %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+		}
 
-		log.Printf("[DEBUG] Authentication successful")
-		return nil
+		if ok := client.Backoff(attempts); !ok {
+			client.authToken = ""
+			log.Printf("[ERROR] Authentication failed after %v retries: StatusCode %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
+			return fmt.Errorf("authentication failed after %v retries, status code: %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
+		} else {
+			log.Printf("[ERROR] Authentication failed: StatusCode %v, retries: %v, response body: %s", httpRes.StatusCode, attempts, string(bodyBytes))
+			continue
+		}
 	}
 }
 
@@ -600,37 +621,53 @@ func (client *Client) refresh() error {
 		req.HttpReq.Header.Add("X-auth-access-token", client.authToken)
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.refreshToken)
 		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
-		if err := client.RateLimiterBucket.Wait(req.HttpReq.Context()); err != nil {
+		if err := client.RateLimiter.Wait(req.HttpReq.Context()); err != nil {
 			return err
 		}
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
-			return err
+			if ok := client.Backoff(attempts); !ok {
+				log.Printf("[ERROR] Authentication token refresh failed after %v retries: HTTP connection error occurred: %+v", attempts, err)
+				return fmt.Errorf("authentication token refresh failed after %v retries: %w", attempts, err)
+			}
+			log.Printf("[ERROR] Authentication token refresh failed: HTTP connection failed: %s, retries: %v", err, attempts)
+			continue
 		}
 		bodyBytes, _ := io.ReadAll(httpRes.Body)
 		httpRes.Body.Close()
-		if httpRes.StatusCode != 204 {
-			log.Printf("[ERROR] Authentication token refresh failed: StatusCode %v", httpRes.StatusCode)
-			return fmt.Errorf("authentication token refresh failed, status code: %v", httpRes.StatusCode)
-		}
-		if len(bodyBytes) > 0 {
-			if ok := client.Backoff(attempts); !ok {
-				log.Printf("[ERROR] Authentication token refresh failed: Invalid credentials")
-				return fmt.Errorf("authentication token refresh failed, invalid credentials")
-			} else {
-				log.Printf("[ERROR] Authentication token refresh failed, retries: %v, response body: %s", attempts, string(bodyBytes))
-				continue
+
+		if httpRes.StatusCode == 204 {
+			// FMC signals success with 204 and carries the new tokens in the response headers.
+			// Validate before overwriting, so that a malformed response cannot discard the
+			// tokens that are currently cached.
+			authToken := httpRes.Header.Get("X-auth-access-token")
+			if authToken == "" {
+				log.Printf("[ERROR] Authentication token refresh failed: no access token returned by FMC")
+				return fmt.Errorf("authentication token refresh failed, no access token returned by FMC")
 			}
+
+			client.authToken = authToken
+			client.refreshToken = httpRes.Header.Get("X-auth-refresh-token")
+			client.LastRefresh = time.Now()
+			client.RefreshCount = client.RefreshCount + 1
+
+			log.Printf("[DEBUG] Authentication token refresh successful")
+			return nil
 		}
 
-		client.authToken = httpRes.Header.Get("X-auth-access-token")
-		client.refreshToken = httpRes.Header.Get("X-auth-refresh-token")
-		client.LastRefresh = time.Now()
-		client.RefreshCount = client.RefreshCount + 1
-		client.DomainUUID = httpRes.Header.Get("DOMAIN_UUID")
+		// Only rate limiting (429) and server-side errors (5xx) are worth retrying.
+		if httpRes.StatusCode != 429 && (httpRes.StatusCode < 500 || httpRes.StatusCode > 599) {
+			log.Printf("[ERROR] Authentication token refresh failed: StatusCode %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+			return fmt.Errorf("authentication token refresh failed, status code: %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+		}
 
-		log.Printf("[DEBUG] Authentication token refresh successful")
-		return nil
+		if ok := client.Backoff(attempts); !ok {
+			log.Printf("[ERROR] Authentication token refresh failed after %v retries: StatusCode %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
+			return fmt.Errorf("authentication token refresh failed after %v retries, status code: %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
+		} else {
+			log.Printf("[ERROR] Authentication token refresh failed: StatusCode %v, retries: %v, response body: %s", httpRes.StatusCode, attempts, string(bodyBytes))
+			continue
+		}
 	}
 }
 
@@ -657,23 +694,28 @@ func (client *Client) Authenticate(currentAuthToken string) error {
 	client.authenticationMutex.Lock()
 	defer client.authenticationMutex.Unlock()
 
-	if client.authToken != "" && currentAuthToken == "" {
-		// authToken is present, no error reported, do nothing
-		return nil
-	}
-
-	if currentAuthToken != "" && currentAuthToken != client.authToken {
-		// authToken has changed since the last request
-		// we assume some other thread has already refreshed it, do nothing
-		return nil
-	}
-
 	if client.authToken == "" {
 		// No authToken, do a full login
 		return client.login()
 	}
 
-	// We have the tokens, but FMC rejected them
+	if currentAuthToken == "" {
+		// authToken is present, no error reported, do nothing
+		return nil
+	}
+
+	if currentAuthToken != client.authToken {
+		// authToken has changed since the last request
+		// we assume some other thread has already refreshed it, do nothing
+		return nil
+	}
+
+	// FMC accepts the same refresh token only a limited number of times
+	if client.RefreshCount >= MaxTokenRefreshes {
+		log.Printf("[DEBUG] Refresh token already used %v times (limit %v), doing a full login", client.RefreshCount, MaxTokenRefreshes)
+		return client.login()
+	}
+
 	// first check if we can refresh the tokens
 	err := client.refresh()
 	if err != nil {
