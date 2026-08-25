@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/time/rate"
 	"gopkg.in/h2non/gock.v1"
 )
 
@@ -15,12 +16,18 @@ const (
 	testURL = "https://10.0.0.1"
 )
 
-func testClient() Client {
+// Must be applied after NewClient returns, not as a modifier: NewClient applies
+// modifiers before reading the FMC version, then overwrites RateLimiter for 7.4.1+.
+func disableRateLimit(client *Client) {
+	client.RateLimiter = rate.NewLimiter(rate.Inf, 1)
+}
+
+func newTestClient(fmcVersion string) Client {
 	defer gock.Off()
 
 	// Client will try to get FMC version on creation, so we need to mock those
 	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
-	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.2.4 (build 123)"}]}`)
+	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"` + fmcVersion + `"}]}`)
 
 	// Prepare client and intercept
 	httpClient := &http.Client{}
@@ -32,20 +39,9 @@ func testClient() Client {
 	return client
 }
 
-func testClient770() Client {
-	defer gock.Off()
-
-	// Client will try to get FMC version on creation, so we need to mock those
-	gock.New(testURL).Post("/api/fmc_platform/v1/auth/generatetoken").Reply(204).SetHeader("X-auth-access-token", "ABC")
-	gock.New(testURL).Get("/api/fmc_platform/v1/info/serverversion").Reply(200).BodyString(`{"items":[{"serverVersion":"7.7.0 (build 123)"}]}`)
-
-	// Prepare client and intercept
-	httpClient := &http.Client{}
-	gock.InterceptClient(httpClient)
-
-	// Create client
-	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(0))
-
+func testClient() Client {
+	client := newTestClient("7.2.4 (build 123)")
+	disableRateLimit(&client)
 	return client
 }
 
@@ -120,6 +116,7 @@ func TestClientLoginRetry(t *testing.T) {
 
 	// Create client
 	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
+	disableRateLimit(&client)
 
 	// Server-side error, retried and eventually successful
 	gock.Flush()
@@ -209,6 +206,7 @@ func TestClientRefreshRetry(t *testing.T) {
 
 	// Create client
 	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
+	disableRateLimit(&client)
 
 	// Server-side error, retried and eventually successful
 	gock.Flush()
@@ -275,12 +273,14 @@ func TestClientGetFMCVersion(t *testing.T) {
 func TestClientRateLimitValue(t *testing.T) {
 	defer gock.Off()
 
+	// newTestClient is used instead of testClient, as the latter disables the rate limit
+
 	// Check rate limit for version 7.2.4
-	client := testClient()
+	client := newTestClient("7.2.4 (build 123)")
 	assert.InDelta(t, 1.97, float64(client.RateLimiter.Limit()), 0.01)
 
 	// Check rate limit for version 7.7.0
-	client = testClient770()
+	client = newTestClient("7.7.0 (build 123)")
 	assert.InDelta(t, 4.90, float64(client.RateLimiter.Limit()), 0.01)
 }
 
@@ -345,6 +345,7 @@ func TestClientGetRetry(t *testing.T) {
 
 	// Create client
 	client, _ := NewClient(testURL, "usr", "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
+	disableRateLimit(&client)
 	client.authToken = "ABC"
 	client.LastRefresh = time.Now()
 

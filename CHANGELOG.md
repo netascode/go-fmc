@@ -1,6 +1,7 @@
 ## 0.4.0 (Unreleased)
 
 - BREAKING CHANGE: `Pwd` field of `Client` is no longer exported
+- BREAKING CHANGE: `Insecure` field of `Client` is removed, as it has never been used (dead field)
 - BREAKING CHANGE: `RateLimiterBucket` field of `Client` renamed to `RateLimiter` and changed type from `*ratelimit.Bucket` to `*rate.Limiter` (replace `juju/ratelimit` with `golang.org/x/time/rate`)
 - Enh: Update `login()` and `refresh()` logic
 - Change: Rate limit for FMC 7.4.1, 7.6.0 and later lowered from 300 req/min to 294 req/min, to keep a safety margin

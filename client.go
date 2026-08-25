@@ -54,8 +54,6 @@ type Client struct {
 	Usr string
 	// pwd is the FMC password or cdFMC API token
 	pwd string
-	// Insecure determines if insecure https connections are allowed.
-	Insecure bool
 	// Maximum number of retries
 	MaxRetries int
 	// Minimum delay between two retries
@@ -408,7 +406,7 @@ func (client *Client) Do(req Req) (Res, error) {
 func (client *Client) do(req Req, body []byte) (*http.Response, error) {
 	// Block until rate limit token available
 	if err := client.RateLimiter.Wait(req.HttpReq.Context()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rate limiter: %w", err)
 	}
 
 	if req.HttpReq.Method != "GET" {
@@ -550,7 +548,7 @@ func (client *Client) login() error {
 		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		req.HttpReq.SetBasicAuth(client.Usr, client.pwd)
 		if err := client.RateLimiter.Wait(req.HttpReq.Context()); err != nil {
-			return err
+			return fmt.Errorf("rate limiter: %w", err)
 		}
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
@@ -622,7 +620,7 @@ func (client *Client) refresh() error {
 		req.HttpReq.Header.Add("X-auth-refresh-token", client.refreshToken)
 		req.HttpReq.Header.Add("User-Agent", client.UserAgent)
 		if err := client.RateLimiter.Wait(req.HttpReq.Context()); err != nil {
-			return err
+			return fmt.Errorf("rate limiter: %w", err)
 		}
 		httpRes, err := client.HttpClient.Do(req.HttpReq)
 		if err != nil {
