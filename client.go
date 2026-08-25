@@ -11,7 +11,6 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/cookiejar"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -363,7 +362,7 @@ func (client *Client) Do(req Req) (Res, error) {
 				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v", req.RequestID, httpRes.StatusCode)
 				log.Printf("[DEBUG] [ReqID: %s] Exit from Do method", req.RequestID)
 				return res, fmt.Errorf("HTTP Request failed: StatusCode %v", httpRes.StatusCode)
-			} else if httpRes.StatusCode == 429 || (httpRes.StatusCode >= 500 && httpRes.StatusCode <= 599) {
+			} else if isRetryableStatus(httpRes.StatusCode) {
 				log.Printf("[ERROR] [ReqID: %s] HTTP Request failed: StatusCode %v, Retries: %v", req.RequestID, httpRes.StatusCode, attempts)
 				continue
 			} else if httpRes.StatusCode == 401 {
@@ -570,6 +569,8 @@ func (client *Client) login() error {
 			// Check if the token exists (eg. wasn't dropped by proxy) before overwritting
 			authToken := httpRes.Header.Get("X-auth-access-token")
 			if authToken == "" {
+				client.authToken = ""
+				client.refreshToken = ""
 				log.Printf("[ERROR] Authentication failed: no access token returned by FMC")
 				return fmt.Errorf("authentication failed, no access token returned by FMC")
 			}
@@ -593,20 +594,19 @@ func (client *Client) login() error {
 		}
 
 		// Only rate limiting (429) and server-side errors (5xx) are worth retrying.
-		if httpRes.StatusCode != 429 && (httpRes.StatusCode < 500 || httpRes.StatusCode > 599) {
-			client.authToken = ""
-			log.Printf("[ERROR] Authentication failed: StatusCode %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
-			return fmt.Errorf("authentication failed, status code: %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
-		}
-
-		if ok := client.Backoff(attempts); !ok {
-			client.authToken = ""
-			log.Printf("[ERROR] Authentication failed after %v retries: StatusCode %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
-			return fmt.Errorf("authentication failed after %v retries, status code: %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
-		} else {
+		if isRetryableStatus(httpRes.StatusCode) && client.Backoff(attempts) {
 			log.Printf("[ERROR] Authentication failed: StatusCode %v, retries: %v, response body: %s", httpRes.StatusCode, attempts, string(bodyBytes))
 			continue
 		}
+
+		client.authToken = ""
+		client.refreshToken = ""
+		if attempts == 0 {
+			log.Printf("[ERROR] Authentication failed: StatusCode %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+			return fmt.Errorf("authentication failed, status code: %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+		}
+		log.Printf("[ERROR] Authentication failed after %v retries: StatusCode %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
+		return fmt.Errorf("authentication failed after %v retries, status code: %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
 	}
 }
 
@@ -656,18 +656,17 @@ func (client *Client) refresh() error {
 		}
 
 		// Only rate limiting (429) and server-side errors (5xx) are worth retrying.
-		if httpRes.StatusCode != 429 && (httpRes.StatusCode < 500 || httpRes.StatusCode > 599) {
-			log.Printf("[ERROR] Authentication token refresh failed: StatusCode %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
-			return fmt.Errorf("authentication token refresh failed, status code: %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
-		}
-
-		if ok := client.Backoff(attempts); !ok {
-			log.Printf("[ERROR] Authentication token refresh failed after %v retries: StatusCode %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
-			return fmt.Errorf("authentication token refresh failed after %v retries, status code: %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
-		} else {
+		if isRetryableStatus(httpRes.StatusCode) && client.Backoff(attempts) {
 			log.Printf("[ERROR] Authentication token refresh failed: StatusCode %v, retries: %v, response body: %s", httpRes.StatusCode, attempts, string(bodyBytes))
 			continue
 		}
+
+		if attempts == 0 {
+			log.Printf("[ERROR] Authentication token refresh failed: StatusCode %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+			return fmt.Errorf("authentication token refresh failed, status code: %v, response body: %s", httpRes.StatusCode, string(bodyBytes))
+		}
+		log.Printf("[ERROR] Authentication token refresh failed after %v retries: StatusCode %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
+		return fmt.Errorf("authentication token refresh failed after %v retries, status code: %v, response body: %s", attempts, httpRes.StatusCode, string(bodyBytes))
 	}
 }
 
@@ -772,19 +771,4 @@ func (client *Client) GetFMCVersion() error {
 	client.FMCVersion = fmcVersion.String()
 
 	return nil
-}
-
-// Create URL path with offset and limit
-func pathWithOffset(path string, offset, limit int) string {
-	sep := "?"
-	if strings.Contains(path, sep) {
-		sep = "&"
-	}
-
-	return path + sep + "offset=" + strconv.Itoa(offset) + "&limit=" + strconv.Itoa(limit)
-}
-
-// hasQueryParam checks if a URL path contains a specific query parameter name.
-func hasQueryParam(path, param string) bool {
-	return strings.Contains(path, "?"+param+"=") || strings.Contains(path, "&"+param+"=")
 }
