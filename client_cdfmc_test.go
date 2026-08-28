@@ -24,6 +24,7 @@ func testClientCDFMC() Client {
 
 	// Create client
 	client, _ := NewClientCDFMC(testURL, "usr", CustomHttpClient(httpClient), MaxRetries(0))
+	disableRateLimit(&client)
 
 	return client
 }
@@ -109,6 +110,7 @@ func TestClientCDFMCGetRetry(t *testing.T) {
 
 	// Create client
 	client, _ := NewClientCDFMC(testURL, "pwd", CustomHttpClient(httpClient), MaxRetries(3), BackoffMinDelay(0))
+	disableRateLimit(&client)
 	client.authToken = "ABC"
 
 	// Request should fail
