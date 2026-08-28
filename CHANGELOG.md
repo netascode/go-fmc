@@ -1,4 +1,4 @@
-## 0.4.0 (Unreleased)
+## 0.4.0
 
 - BREAKING CHANGE: `Pwd` field of `Client` is no longer exported
 - BREAKING CHANGE: `Insecure` field of `Client` is removed, as it has never been used (dead field)
