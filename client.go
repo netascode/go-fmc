@@ -96,10 +96,15 @@ type Client struct {
 //
 //	client, _ := NewClient("https://fmc1.cisco.com", "user", "password", RequestTimeout(120*time.Second))
 func NewClient(url, usr, pwd string, mods ...func(*Client)) (Client, error) {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		Proxy:           http.ProxyFromEnvironment,
+	// Start from the default transport to inherit its dial, TLS handshake and idle connection timeouts.
+	// http.DefaultTransport may have been replaced (e.g. by mocking or instrumentation libraries).
+	var tr *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = dt.Clone()
+	} else {
+		tr = &http.Transport{Proxy: http.ProxyFromEnvironment}
 	}
+	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 	cookieJar, _ := cookiejar.New(nil)
 	httpClient := http.Client{

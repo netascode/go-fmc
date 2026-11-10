@@ -1,3 +1,7 @@
+## 0.4.1
+
+- Fix: Default HTTP transport is now cloned from `http.DefaultTransport`, inheriting its defaults
+
 ## 0.4.0
 
 - BREAKING CHANGE: `Pwd` field of `Client` is no longer exported
